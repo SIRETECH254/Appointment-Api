@@ -7,6 +7,9 @@ import path from "path";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import swaggerConfig from "./config/swagger";
+import authRoutes from "./routes/authRoutes";
+import roleRoutes from "./routes/roleRoutes";
+import userRoutes from "./routes/userRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -87,6 +90,11 @@ app.use(
   swaggerConfig.swaggerUi.serve,
   swaggerConfig.swaggerUi.setup(swaggerConfig.specs, swaggerConfig.options)
 );
+
+// Auth, Role, User routes
+app.use("/api/auth", authRoutes);
+app.use("/api/roles", roleRoutes);
+app.use("/api/users", userRoutes);
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app
