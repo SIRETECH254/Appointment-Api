@@ -18,13 +18,14 @@ import {
   getCustomers
 } from "../controllers/userController";
 import { authenticateToken, authorizeRoles, requireAdmin } from "../middleware/auth";
+import { uploadUserAvatar } from "../config/cloudinary";
 
 const router = express.Router();
 
 // Get current user profile
 router.get("/profile", authenticateToken, getUserProfile);
 // Update current user profile
-router.put("/profile", authenticateToken, updateUserProfile);
+router.put("/profile", authenticateToken, uploadUserAvatar.single("avatar"), updateUserProfile);
 // Change current user password
 router.put("/change-password", authenticateToken, changePassword);
 // Get notification preferences
@@ -40,7 +41,7 @@ router.get("/", authenticateToken, authorizeRoles(["admin"]), getAllUsers);
 // Get user by ID
 router.get("/:userId", authenticateToken, authorizeRoles(["admin"]), getUserById);
 // Update user by ID
-router.put("/:userId", authenticateToken, authorizeRoles(["admin"]), updateUser);
+router.put("/:userId", authenticateToken, authorizeRoles(["admin"]), uploadUserAvatar.single("avatar"), updateUser);
 // Update user status
 router.put("/:userId/status", authenticateToken, authorizeRoles(["admin"]), updateUserStatus);
 // Set single admin role (legacy)

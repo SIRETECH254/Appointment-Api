@@ -90,20 +90,26 @@ const userSchema = new Schema<IUser>(
     lastLoginAt: {
       type: Date
     },
-    services: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "Service"
-      }
-    ],
+    services: {
+      type: [
+        {
+          type: Schema.Types.ObjectId,
+          ref: "Service"
+        }
+      ],
+      default: undefined
+    },
     workingHours: {
-      monday: [{ start: String, end: String }],
-      tuesday: [{ start: String, end: String }],
-      wednesday: [{ start: String, end: String }],
-      thursday: [{ start: String, end: String }],
-      friday: [{ start: String, end: String }],
-      saturday: [{ start: String, end: String }],
-      sunday: [{ start: String, end: String }]
+      type: {
+        monday: [{ start: String, end: String }],
+        tuesday: [{ start: String, end: String }],
+        wednesday: [{ start: String, end: String }],
+        thursday: [{ start: String, end: String }],
+        friday: [{ start: String, end: String }],
+        saturday: [{ start: String, end: String }],
+        sunday: [{ start: String, end: String }]
+      },
+      default: undefined
     },
     notificationPreferences: {
       email: { type: Boolean, default: true },

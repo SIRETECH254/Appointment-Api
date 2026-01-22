@@ -4,6 +4,7 @@ import validator from "validator";
 import { errorHandler } from "../middleware/errorHandler";
 import User from "../models/User";
 import Role from "../models/Role";
+import { deleteFromCloudinary, uploadToCloudinary } from "../config/cloudinary";
 
 // Get authenticated user profile with roles
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -39,13 +40,57 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
     // Apply profile updates
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
-    if (phone) user.phone = phone;
+    if (phone) {
+      if (!validator.isMobilePhone(phone)) {
+        return next(errorHandler(400, "Please provide a valid phone number"));
+      }
 
-    // Handle avatar removal or replacement
-    if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
+      const existingUser = await User.findOne({
+        phone,
+        _id: { $ne: user._id }
+      });
+
+      if (existingUser) {
+        return next(errorHandler(400, "Phone number is already taken by another user"));
+      }
+
+      user.phone = phone;
+    }
+
+    // Handle avatar upload via multipart/form-data
+    if (req.file) {
+      const uploadResult = await uploadToCloudinary(req.file, "appointment/avatars");
+
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
+      user.avatar = uploadResult.url;
+      user.avatarPublicId = uploadResult.public_id;
+    } else if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
       user.avatar = null;
       user.avatarPublicId = null;
     } else if (typeof avatar === "string" && avatar.trim().length > 0) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
       user.avatar = avatar.trim();
       user.avatarPublicId = null;
     }
@@ -70,6 +115,9 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
       }
     });
   } catch (error: any) {
+    if (error?.code === 11000 && error?.keyPattern?.phone) {
+      return next(errorHandler(400, "Phone number is already taken by another user"));
+    }
     next(errorHandler(500, "Server error while updating profile"));
   }
 };
@@ -282,11 +330,40 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       user.email = email.toLowerCase();
     }
 
-    // Update avatar value if provided
-    if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
+    // Handle avatar upload via multipart/form-data
+    if (req.file) {
+      const uploadResult = await uploadToCloudinary(req.file, "appointment/avatars");
+
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
+      user.avatar = uploadResult.url;
+      user.avatarPublicId = uploadResult.public_id;
+    } else if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
       user.avatar = null;
       user.avatarPublicId = null;
     } else if (typeof avatar === "string" && avatar.trim().length > 0) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error("Failed to delete previous avatar:", deleteError);
+        }
+      }
+
       user.avatar = avatar.trim();
       user.avatarPublicId = null;
     }

@@ -577,6 +577,82 @@ export default router;
 }
 ```
 
+#### `PUT /api/users/profile`
+**Headers:** `Authorization: Bearer <token>`
+**Body (JSON):**
+```json
+{
+  "firstName": "John",
+  "lastName": "Smith",
+  "phone": "+254712345679",
+  "avatar": "https://example.com/avatar.jpg"
+}
+```
+**Body (multipart/form-data):**
+- Field `avatar` (file) for image upload
+- Optional text fields: `firstName`, `lastName`, `phone`
+**Notes:**
+- To remove the avatar, send `avatar: null` or an empty string in JSON.
+- If a new file is uploaded, the previous Cloudinary asset is deleted.
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Profile updated successfully"
+}
+```
+
+#### `PUT /api/users/change-password`
+**Headers:** `Authorization: Bearer <token>`
+**Body:**
+```json
+{
+  "currentPassword": "oldPassword123",
+  "newPassword": "newSecurePassword123"
+}
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+#### `GET /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notificationPreferences": {
+      "email": true,
+      "sms": true,
+      "inApp": true
+    }
+  }
+}
+```
+
+#### `PUT /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+**Body:**
+```json
+{
+  "email": true,
+  "sms": false,
+  "inApp": true
+}
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification preferences updated successfully"
+}
+```
+
 #### `POST /api/users/admin-create`
 **Headers:** `Authorization: Bearer <admin_token>`
 **Body:**
@@ -624,9 +700,42 @@ export default router;
 }
 ```
 
+#### `GET /api/users/customers`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Query:** `page`, `limit`, `search`, `status`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "customers": [],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalCustomers": 0
+    }
+  }
+}
+```
+
+#### `GET /api/users/:userId`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "email": "john@company.com"
+    }
+  }
+}
+```
+
 #### `PUT /api/users/:userId`
 **Headers:** `Authorization: Bearer <admin_token>`
-**Body:**
+**Body (JSON):**
 ```json
 {
   "firstName": "John",
@@ -636,6 +745,12 @@ export default router;
   "avatar": "https://example.com/avatar.jpg"
 }
 ```
+**Body (multipart/form-data):**
+- Field `avatar` (file) for image upload
+- Optional text fields: `firstName`, `lastName`, `phone`, `email`
+**Notes:**
+- To remove the avatar, send `avatar: null` or an empty string in JSON.
+- If a new file is uploaded, the previous Cloudinary asset is deleted.
 **Response:**
 ```json
 {
@@ -666,6 +781,47 @@ export default router;
 }
 ```
 
+#### `PUT /api/users/:userId/admin`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Body:**
+```json
+{
+  "role": "admin"
+}
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User role updated to admin successfully"
+}
+```
+
+#### `GET /api/users/:userId/roles`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "roles": []
+    }
+  }
+}
+```
+
+#### `DELETE /api/users/:userId`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User deleted successfully"
+}
+```
+
 #### `POST /api/users/:userId/roles`
 **Headers:** `Authorization: Bearer <admin_token>`
 **Body:**
@@ -685,6 +841,16 @@ export default router;
       "roles": []
     }
   }
+}
+```
+
+#### `DELETE /api/users/:userId/roles/:roleId`
+**Headers:** `Authorization: Bearer <admin_token>`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Role removed successfully"
 }
 ```
 
@@ -747,14 +913,11 @@ curl -X GET http://localhost:4500/api/users/profile \
 ### Update Profile
 ```bash
 curl -X PUT http://localhost:4500/api/users/profile \
-  -H "Content-Type: application/json" \
   -H "Authorization: Bearer <access_token>" \
-  -d '{
-    "firstName": "John",
-    "lastName": "Smith",
-    "phone": "+254712345679",
-    "avatar": "https://example.com/avatar.jpg"
-  }'
+  -F "firstName=John" \
+  -F "lastName=Smith" \
+  -F "phone=+254712345679" \
+  -F "avatar=@/path/to/avatar.jpg"
 ```
 **Response:**
 ```json
