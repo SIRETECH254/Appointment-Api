@@ -40,11 +40,6 @@ const userSchema = new Schema<IUser>(
       unique: true,
       trim: true
     },
-    company: {
-      type: String,
-      trim: true,
-      maxlength: [100, "Company cannot exceed 100 characters"]
-    },
     address: {
       type: String,
       trim: true,
@@ -95,6 +90,21 @@ const userSchema = new Schema<IUser>(
     lastLoginAt: {
       type: Date
     },
+    services: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Service"
+      }
+    ],
+    workingHours: {
+      monday: [{ start: String, end: String }],
+      tuesday: [{ start: String, end: String }],
+      wednesday: [{ start: String, end: String }],
+      thursday: [{ start: String, end: String }],
+      friday: [{ start: String, end: String }],
+      saturday: [{ start: String, end: String }],
+      sunday: [{ start: String, end: String }]
+    },
     notificationPreferences: {
       email: { type: Boolean, default: true },
       sms: { type: Boolean, default: true },
@@ -110,7 +120,6 @@ const userSchema = new Schema<IUser>(
 
 userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
-userSchema.index({ company: 1 });
 userSchema.index({ email: 1, isActive: 1 });
 
 userSchema.virtual("fullName").get(function fullName() {

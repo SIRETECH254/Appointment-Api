@@ -249,8 +249,7 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
       query.$or = [
         { firstName: { $regex: search, $options: "i" } },
         { lastName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { company: { $regex: search, $options: "i" } }
+        { email: { $regex: search, $options: "i" } }
       ];
     }
 

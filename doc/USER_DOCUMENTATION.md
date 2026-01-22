@@ -31,7 +31,6 @@ interface IUser {
   password: string;
   roles: ObjectId[];
   phone: string;
-  company?: string;
   address?: string;
   city?: string;
   country?: string;
@@ -44,6 +43,16 @@ interface IUser {
   resetPasswordToken?: string;
   resetPasswordExpiry?: Date;
   lastLoginAt?: Date;
+  services?: ObjectId[];
+  workingHours?: {
+    monday: Array<{ start: string; end: string }>;
+    tuesday: Array<{ start: string; end: string }>;
+    wednesday: Array<{ start: string; end: string }>;
+    thursday: Array<{ start: string; end: string }>;
+    friday: Array<{ start: string; end: string }>;
+    saturday: Array<{ start: string; end: string }>;
+    sunday: Array<{ start: string; end: string }>;
+  };
   notificationPreferences?: {
     email?: boolean;
     sms?: boolean;
@@ -71,7 +80,6 @@ const userSchema = new Schema<IUser>({
   password: { type: String, required: true, minlength: 6, select: false },
   roles: [{ type: Schema.Types.ObjectId, ref: 'Role' }],
   phone: { type: String, required: true, unique: true, trim: true },
-  company: { type: String, trim: true, maxlength: 100 },
   address: { type: String, trim: true, maxlength: 200 },
   city: { type: String, trim: true, maxlength: 50 },
   country: { type: String, trim: true, maxlength: 50 },
@@ -84,6 +92,16 @@ const userSchema = new Schema<IUser>({
   resetPasswordToken: { type: String, select: false },
   resetPasswordExpiry: { type: Date, select: false },
   lastLoginAt: { type: Date },
+  services: [{ type: Schema.Types.ObjectId, ref: 'Service' }],
+  workingHours: {
+    monday: [{ start: String, end: String }],
+    tuesday: [{ start: String, end: String }],
+    wednesday: [{ start: String, end: String }],
+    thursday: [{ start: String, end: String }],
+    friday: [{ start: String, end: String }],
+    saturday: [{ start: String, end: String }],
+    sunday: [{ start: String, end: String }]
+  },
   notificationPreferences: {
     email: { type: Boolean, default: true },
     sms: { type: Boolean, default: true },
@@ -93,7 +111,6 @@ const userSchema = new Schema<IUser>({
 
 userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
-userSchema.index({ company: 1 });
 userSchema.index({ email: 1, isActive: 1 });
 
 const User = mongoose.model<IUser>('User', userSchema);
@@ -108,10 +125,11 @@ email:     { required: true, unique: true, format: email }
 password:  { required: true, minlength: 6, select: false }
 roles:     { type: Array, ref: 'Role' }
 phone:     { required: true, unique: true }
-company:   { optional, maxlength: 100 }
 address:   { optional, maxlength: 200 }
 city:      { optional, maxlength: 50 }
 country:   { optional, maxlength: 50 }
+services:  { type: Array, ref: 'Service' }
+workingHours: { optional, days: monday-sunday }
 isActive:  { default: true }
 emailVerified: { default: false }
 ```
@@ -359,7 +377,7 @@ export const deleteUser = async (req, res, next) => {
 ```typescript
 // Admin create customer
 export const adminCreateCustomer = async (req, res, next) => {
-  const { firstName, lastName, email, phone, roleName, company, address, city, country } = req.body;
+  const { firstName, lastName, email, phone, roleName, address, city, country } = req.body;
   if (!firstName || !lastName || !email || !phone) return next(errorHandler(400, 'firstName, lastName, email and phone are required'));
   const existing = await User.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (existing) return next(errorHandler(400, `A user with this ${existing.email === email ? 'email' : 'phone'} already exists`));
@@ -369,11 +387,11 @@ export const adminCreateCustomer = async (req, res, next) => {
   const roleDoc = await Role.findOne({ name: roleToAssign });
   if (!roleDoc) return next(errorHandler(404, 'Role not found'));
 
-  const user = await User.create({ firstName, lastName, email: email.toLowerCase(), phone, password: passwordHash, roles: [roleDoc._id], company, address, city, country, isActive: true, emailVerified: false });
+  const user = await User.create({ firstName, lastName, email: email.toLowerCase(), phone, password: passwordHash, roles: [roleDoc._id], address, city, country, isActive: true, emailVerified: false });
 
   await user.populate('roles', 'name displayName');
 
-  res.status(201).json({ success: true, message: 'Customer created successfully', data: { user: { id: user._id, firstName: user.firstName, lastName: user.lastName, email: user.email, phone: user.phone, roles: user.roles, company: user.company, address: user.address, city: user.city, country: user.country, isActive: user.isActive, emailVerified: user.emailVerified, createdAt: user.createdAt } } });
+  res.status(201).json({ success: true, message: 'Customer created successfully', data: { user: { id: user._id, firstName: user.firstName, lastName: user.lastName, email: user.email, phone: user.phone, roles: user.roles, address: user.address, city: user.city, country: user.country, isActive: user.isActive, emailVerified: user.emailVerified, createdAt: user.createdAt } } });
 };
 ```
 
@@ -432,8 +450,7 @@ export const getCustomers = async (req, res, next) => {
     query.$or = [
       { firstName: { $regex: search, $options: 'i' } },
       { lastName: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-      { company: { $regex: search, $options: 'i' } }
+      { email: { $regex: search, $options: 'i' } }
     ];
   }
 
@@ -570,7 +587,6 @@ export default router;
   "email": "jane@customer.com",
   "phone": "+254712345680",
   "roleName": "customer",
-  "company": "Customer Corp",
   "address": "456 Main St",
   "city": "Nairobi",
   "country": "Kenya"
@@ -776,7 +792,6 @@ curl -X POST http://localhost:4500/api/users/admin-create \
     "lastName": "Customer",
     "email": "jane@customer.com",
     "phone": "+254712345680",
-    "company": "Customer Corp",
     "address": "456 Main St",
     "city": "Nairobi",
     "country": "Kenya"
@@ -822,7 +837,6 @@ Common responses:
 userSchema.index({ email: 1 });
 userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
-userSchema.index({ company: 1 });
 userSchema.index({ email: 1, isActive: 1 });
 ```
 

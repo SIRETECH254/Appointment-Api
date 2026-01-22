@@ -72,7 +72,6 @@ interface IUser {
   password: string; // hashed
   roles: ObjectId[]; // Role references
   phone: string;
-  company?: string;
   address?: string;
   city?: string;
   country?: string;
@@ -84,6 +83,16 @@ interface IUser {
   resetPasswordToken?: string;
   resetPasswordExpiry?: Date;
   lastLoginAt?: Date;
+  services?: ObjectId[];
+  workingHours?: {
+    monday: Array<{ start: string; end: string }>;
+    tuesday: Array<{ start: string; end: string }>;
+    wednesday: Array<{ start: string; end: string }>;
+    thursday: Array<{ start: string; end: string }>;
+    friday: Array<{ start: string; end: string }>;
+    saturday: Array<{ start: string; end: string }>;
+    sunday: Array<{ start: string; end: string }>;
+  };
   notificationPreferences?: {
     email?: boolean;
     sms?: boolean;
@@ -113,30 +122,7 @@ interface IRole {
 
 ---
 
-### 3. Staff Model
-```typescript
-interface IStaff {
-  _id: ObjectId;
-  userId: ObjectId;
-  services: ObjectId[];
-  workingHours: {
-    monday: Array<{ start: string; end: string }>;
-    tuesday: Array<{ start: string; end: string }>;
-    wednesday: Array<{ start: string; end: string }>;
-    thursday: Array<{ start: string; end: string }>;
-    friday: Array<{ start: string; end: string }>;
-    saturday: Array<{ start: string; end: string }>;
-    sunday: Array<{ start: string; end: string }>;
-  };
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
----
-
-### 4. Service Model
+### 3. Service Model
 ```typescript
 interface IService {
   _id: ObjectId;
@@ -154,7 +140,7 @@ interface IService {
 
 ---
 
-### 5. StoreConfiguration Model
+### 4. StoreConfiguration Model
 ```typescript
 interface IStoreConfiguration {
   _id: ObjectId;

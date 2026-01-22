@@ -20,7 +20,6 @@ export interface IUser extends Document {
   password: string;
   roles: Types.ObjectId[] | IRole[];
   phone: string;
-  company?: string;
   address?: string;
   city?: string;
   country?: string;
@@ -33,6 +32,16 @@ export interface IUser extends Document {
   resetPasswordToken?: string | undefined;
   resetPasswordExpiry?: Date | undefined;
   lastLoginAt?: Date;
+  services?: Types.ObjectId[];
+  workingHours?: {
+    monday: Array<{ start: string; end: string }>;
+    tuesday: Array<{ start: string; end: string }>;
+    wednesday: Array<{ start: string; end: string }>;
+    thursday: Array<{ start: string; end: string }>;
+    friday: Array<{ start: string; end: string }>;
+    saturday: Array<{ start: string; end: string }>;
+    sunday: Array<{ start: string; end: string }>;
+  };
   notificationPreferences?: {
     email?: boolean;
     sms?: boolean;
@@ -53,11 +62,20 @@ export interface IUserResponse {
   isActive: boolean;
   emailVerified: boolean;
   avatar?: string | null;
-  company?: string;
   address?: string;
   city?: string;
   country?: string;
   lastLoginAt?: Date;
+  services?: Types.ObjectId[];
+  workingHours?: {
+    monday: Array<{ start: string; end: string }>;
+    tuesday: Array<{ start: string; end: string }>;
+    wednesday: Array<{ start: string; end: string }>;
+    thursday: Array<{ start: string; end: string }>;
+    friday: Array<{ start: string; end: string }>;
+    saturday: Array<{ start: string; end: string }>;
+    sunday: Array<{ start: string; end: string }>;
+  };
   createdAt?: Date;
   updatedAt?: Date;
 }

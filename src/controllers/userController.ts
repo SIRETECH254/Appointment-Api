@@ -452,7 +452,7 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
 // Admin create customer with default role assignment
 export const adminCreateCustomer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { firstName, lastName, email, phone, roleName, company, address, city, country } = req.body;
+    const { firstName, lastName, email, phone, roleName, address, city, country } = req.body;
 
     // Validate required fields
     if (!firstName || !lastName || !email || !phone) {
@@ -486,7 +486,6 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
       phone,
       password: passwordHash,
       roles: [roleDoc._id],
-      company,
       address,
       city,
       country,
@@ -508,7 +507,6 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
           email: user.email,
           phone: user.phone,
           roles: user.roles,
-          company: user.company,
           address: user.address,
           city: user.city,
           country: user.country,
@@ -627,8 +625,7 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
       query.$or = [
         { firstName: { $regex: search, $options: "i" } },
         { lastName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { company: { $regex: search, $options: "i" } }
+        { email: { $regex: search, $options: "i" } }
       ];
     }
 
