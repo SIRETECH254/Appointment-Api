@@ -5,8 +5,10 @@ import { errorHandler } from "../middleware/errorHandler";
 import User from "../models/User";
 import Role from "../models/Role";
 
+// Get authenticated user profile with roles
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    // Load user with populated roles
     const user = await User.findById(req.user?._id)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName description permissions");
@@ -24,6 +26,7 @@ export const getUserProfile = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+// Update authenticated user's basic profile fields
 export const updateUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { firstName, lastName, phone, avatar } = req.body;
@@ -33,10 +36,12 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
       return next(errorHandler(404, "User not found"));
     }
 
+    // Apply profile updates
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     if (phone) user.phone = phone;
 
+    // Handle avatar removal or replacement
     if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
       user.avatar = null;
       user.avatarPublicId = null;
@@ -69,9 +74,11 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
   }
 };
 
+// Change password after verifying current password
 export const changePassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { currentPassword, newPassword } = req.body;
+    // Require both current and new password
     if (!currentPassword || !newPassword) {
       return next(errorHandler(400, "Current password and new password are required"));
     }
@@ -81,11 +88,13 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
       return next(errorHandler(404, "User not found"));
     }
 
+    // Verify current password
     const ok = bcrypt.compareSync(currentPassword, user.password);
     if (!ok) {
       return next(errorHandler(400, "Current password is incorrect"));
     }
 
+    // Hash and store new password
     user.password = bcrypt.hashSync(newPassword, 12);
     await user.save();
 
@@ -98,12 +107,14 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+// Get user's notification preferences
 export const getNotificationPreferences = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
+    // Fetch notification preferences only
     const user = await User.findById(req.user?._id).select("notificationPreferences");
     if (!user) {
       return next(errorHandler(404, "User not found"));
@@ -118,6 +129,7 @@ export const getNotificationPreferences = async (
   }
 };
 
+// Update user's notification preferences
 export const updateNotificationPreferences = async (
   req: Request,
   res: Response,
@@ -131,6 +143,7 @@ export const updateNotificationPreferences = async (
       return next(errorHandler(404, "User not found"));
     }
 
+    // Merge provided preferences
     user.notificationPreferences = user.notificationPreferences || {};
     if (email !== undefined) user.notificationPreferences.email = email;
     if (sms !== undefined) user.notificationPreferences.sms = sms;
@@ -148,11 +161,13 @@ export const updateNotificationPreferences = async (
   }
 };
 
+// Admin list of users with filters and pagination
 export const getAllUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { page = 1, limit = 10, search, role, status } = req.query;
     const query: any = {};
 
+    // Apply text search filters
     if (search) {
       query.$or = [
         { firstName: { $regex: search, $options: "i" } },
@@ -161,6 +176,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
       ];
     }
 
+    // Resolve role name to role id
     if (role) {
       const roleDoc = await Role.findOne({ name: String(role).toLowerCase() });
       if (!roleDoc) {
@@ -169,16 +185,19 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
       query.roles = roleDoc._id;
     }
 
+    // Status filters
     if (status === "active") query.isActive = true;
     else if (status === "inactive") query.isActive = false;
     if (status === "verified") query.emailVerified = true;
     else if (status === "unverified") query.emailVerified = false;
 
+    // Pagination options
     const options = {
       page: parseInt(page as string, 10),
       limit: parseInt(limit as string, 10)
     };
 
+    // Query users with pagination
     const users = await User.find(query)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName")
@@ -186,6 +205,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
 
+    // Total count for pagination
     const total = await User.countDocuments(query);
 
     res.status(200).json({
@@ -206,9 +226,11 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+// Admin get a single user by ID
 export const getUserById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
+    // Load target user with role details
     const user = await User.findById(userId)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName description permissions");
@@ -226,6 +248,7 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+// Admin update user profile fields
 export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -236,11 +259,13 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       return next(errorHandler(404, "User not found"));
     }
 
+    // Apply admin edits
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     if (phone) user.phone = phone;
 
     if (email) {
+      // Validate and enforce unique email
       if (!validator.isEmail(email)) {
         return next(errorHandler(400, "Please provide a valid email"));
       }
@@ -257,6 +282,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       user.email = email.toLowerCase();
     }
 
+    // Update avatar value if provided
     if (avatar === null || (typeof avatar === "string" && avatar.trim().length === 0)) {
       user.avatar = null;
       user.avatarPublicId = null;
@@ -288,16 +314,19 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Admin activate/deactivate a user
 export const updateUserStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
     const { isActive } = req.body;
     const user = await User.findById(userId);
 
+    // Ensure user exists
     if (!user) {
       return next(errorHandler(404, "User not found"));
     }
 
+    // Apply status change if provided
     if (isActive !== undefined) user.isActive = isActive;
     await user.save();
 
@@ -320,6 +349,7 @@ export const updateUserStatus = async (req: Request, res: Response, next: NextFu
   }
 };
 
+// Set a single primary role (legacy admin endpoint)
 export const setUserAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
@@ -330,16 +360,19 @@ export const setUserAdmin = async (req: Request, res: Response, next: NextFuncti
       return next(errorHandler(404, "User not found"));
     }
 
+    // Validate role against allowed list
     const validRoles = ["admin", "staff", "customer"];
     if (!validRoles.includes(role)) {
       return next(errorHandler(400, "Invalid role"));
     }
 
+    // Resolve role document
     const roleDoc = await Role.findOne({ name: role });
     if (!roleDoc) {
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Replace roles array with a single role
     user.roles = [roleDoc._id];
     await user.save();
 
@@ -361,9 +394,11 @@ export const setUserAdmin = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
+// Get roles assigned to a user
 export const getUserRoles = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
+    // Load user with role details
     const user = await User.findById(userId).populate("roles", "name displayName description permissions");
 
     if (!user) {
@@ -387,10 +422,12 @@ export const getUserRoles = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
+// Delete a user (admin only)
 export const deleteUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
 
+    // Prevent deleting self
     if (req.user && String(req.user._id) === String(userId)) {
       return next(errorHandler(400, "You cannot delete your own account"));
     }
@@ -400,6 +437,7 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
       return next(errorHandler(404, "User not found"));
     }
 
+    // Delete user record
     await User.findByIdAndDelete(userId);
 
     res.status(200).json({
@@ -411,14 +449,17 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Admin create customer with default role assignment
 export const adminCreateCustomer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { firstName, lastName, email, phone, roleName, company, address, city, country } = req.body;
 
+    // Validate required fields
     if (!firstName || !lastName || !email || !phone) {
       return next(errorHandler(400, "firstName, lastName, email and phone are required"));
     }
 
+    // Enforce unique email/phone
     const existing = await User.findOne({
       $or: [{ email: email.toLowerCase() }, { phone }]
     });
@@ -428,13 +469,16 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
       );
     }
 
+    // Hash phone as initial password
     const passwordHash = bcrypt.hashSync(String(phone), 12);
     const roleToAssign = roleName ? String(roleName).toLowerCase() : "customer";
+    // Resolve role for assignment
     const roleDoc = await Role.findOne({ name: roleToAssign });
     if (!roleDoc) {
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Create user document
     const user = await User.create({
       firstName,
       lastName,
@@ -450,6 +494,7 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
       emailVerified: false
     });
 
+    // Populate roles for response
     await user.populate("roles", "name displayName");
 
     res.status(201).json({
@@ -478,11 +523,13 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
   }
 };
 
+// Assign an additional role to a user
 export const assignRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
     const { roleName } = req.body;
 
+    // Require role name
     if (!roleName) {
       return next(errorHandler(400, "roleName is required"));
     }
@@ -492,11 +539,13 @@ export const assignRole = async (req: Request, res: Response, next: NextFunction
       return next(errorHandler(404, "User not found"));
     }
 
+    // Lookup role by name
     const roleDoc = await Role.findOne({ name: String(roleName).toLowerCase() });
     if (!roleDoc) {
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Add role if not already assigned
     const roleId = roleDoc._id.toString();
     const normalizedRoles = (user.roles || []).map((role: any) => (role?._id ? role._id : role));
     const hasRole = normalizedRoles.some((role: any) => role.toString() === roleId);
@@ -505,6 +554,7 @@ export const assignRole = async (req: Request, res: Response, next: NextFunction
       await user.save();
     }
 
+    // Populate roles for response
     await user.populate("roles", "name displayName");
 
     res.status(200).json({
@@ -522,20 +572,24 @@ export const assignRole = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Remove a role from a user (leave at least one)
 export const removeRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId, roleId } = req.params;
     const user = await User.findById(userId);
 
+    // Ensure user exists
     if (!user) {
       return next(errorHandler(404, "User not found"));
     }
 
+    // Normalize roles and enforce at least one role
     const currentRoles = (user.roles || []).map((role: any) => (role?._id ? role._id : role));
     if (currentRoles.length <= 1) {
       return next(errorHandler(400, "User must have at least one role"));
     }
 
+    // Remove role from user
     user.roles = currentRoles.filter((role: any) => role.toString() !== roleId) as any;
     await user.save();
     await user.populate("roles", "name displayName");
@@ -555,15 +609,18 @@ export const removeRole = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Admin list of customers by role
 export const getCustomers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { page = 1, limit = 10, search, status } = req.query;
     const customerRole = await Role.findOne({ name: "customer" });
 
+    // Ensure customer role exists
     if (!customerRole) {
       return next(errorHandler(404, "Customer role not found. Please run seed script first."));
     }
 
+    // Build query filters
     const query: any = { roles: customerRole._id };
 
     if (search) {
@@ -587,11 +644,13 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
       query.emailVerified = false;
     }
 
+    // Pagination options
     const options = {
       page: parseInt(page as string, 10),
       limit: parseInt(limit as string, 10)
     };
 
+    // Query customers with pagination
     const customers = await User.find(query)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName")
@@ -599,6 +658,7 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
 
+    // Total count for pagination
     const total = await User.countDocuments(query);
 
     res.status(200).json({

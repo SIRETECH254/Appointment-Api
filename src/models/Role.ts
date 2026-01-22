@@ -42,7 +42,6 @@ const roleSchema = new Schema<IRole>(
   }
 );
 
-roleSchema.index({ name: 1 });
 roleSchema.index({ isActive: 1 });
 roleSchema.index({ isSystemRole: 1 });
 

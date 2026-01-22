@@ -24,10 +24,12 @@ const smsClient =
       }).SMS
     : null;
 
+// Send email through configured SMTP transport
 const sendEmail = async (to: string, subject: string, text: string): Promise<any> => {
   if (!transporter) {
     throw new Error("SMTP transporter not configured");
   }
+
   return transporter.sendMail({
     from: fromEmail,
     to,
@@ -36,16 +38,19 @@ const sendEmail = async (to: string, subject: string, text: string): Promise<any
   });
 };
 
+// Send SMS via Africa's Talking
 const sendSms = async (to: string, message: string): Promise<any> => {
   if (!smsClient) {
     throw new Error("Africa's Talking SMS client not configured");
   }
+
   return smsClient.send({
     to: [to],
     message
   });
 };
 
+// Send OTP via email and SMS
 export const sendOTPNotification = async (
   email: string,
   phone: string,
@@ -66,6 +71,7 @@ export const sendOTPNotification = async (
   return results;
 };
 
+// Send password reset link via email and SMS
 export const sendPasswordResetNotification = async (
   email: string,
   phone: string,
@@ -88,6 +94,7 @@ export const sendPasswordResetNotification = async (
   return results;
 };
 
+// Send welcome notification after verification
 export const sendWelcomeNotification = async (
   email: string,
   phone: string,

@@ -3,15 +3,18 @@ import { errorHandler } from "../middleware/errorHandler";
 import Role from "../models/Role";
 import User from "../models/User";
 
+// List roles with optional filters
 export const getAllRoles = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { isActive, search } = req.query;
     const query: any = {};
 
+    // Optional filters
     if (isActive !== undefined) {
       query.isActive = isActive === "true";
     }
 
+    // Search by name/display/description
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
@@ -32,11 +35,13 @@ export const getAllRoles = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+// Get a single role by ID
 export const getRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { roleId } = req.params;
     const role = await Role.findById(roleId);
 
+    // Ensure role exists
     if (!role) {
       return next(errorHandler(404, "Role not found"));
     }
@@ -51,19 +56,23 @@ export const getRole = async (req: Request, res: Response, next: NextFunction): 
   }
 };
 
+// Create a new custom role
 export const createRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { name, displayName, description, permissions, isActive } = req.body;
 
+    // Validate required fields
     if (!name || !displayName) {
       return next(errorHandler(400, "Name and display name are required"));
     }
 
+    // Ensure role name is unique
     const existingRole = await Role.findOne({ name: name.toLowerCase() });
     if (existingRole) {
       return next(errorHandler(400, "Role with this name already exists"));
     }
 
+    // Create a non-system role
     const role = new Role({
       name: name.toLowerCase(),
       displayName,
@@ -86,6 +95,7 @@ export const createRole = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Update role metadata and permissions
 export const updateRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { roleId } = req.params;
@@ -96,6 +106,7 @@ export const updateRole = async (req: Request, res: Response, next: NextFunction
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Block renaming system roles
     if (role.isSystemRole && req.body.name && req.body.name !== role.name) {
       return next(errorHandler(400, "Cannot change system role name"));
     }
@@ -118,6 +129,7 @@ export const updateRole = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// Delete a non-system role if unused
 export const deleteRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { roleId } = req.params;
@@ -127,10 +139,12 @@ export const deleteRole = async (req: Request, res: Response, next: NextFunction
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Prevent deleting system roles
     if (role.isSystemRole) {
       return next(errorHandler(400, "Cannot delete system roles"));
     }
 
+    // Ensure no users still reference this role
     const usersWithRole = await User.countDocuments({ roles: roleId });
     if (usersWithRole > 0) {
       return next(
@@ -153,6 +167,7 @@ export const deleteRole = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// List users assigned to a role
 export const getUsersByRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { roleId } = req.params;
@@ -163,6 +178,7 @@ export const getUsersByRole = async (req: Request, res: Response, next: NextFunc
       return next(errorHandler(404, "Role not found"));
     }
 
+    // Build query with filters
     const query: any = { roles: roleId };
     if (isActive !== undefined) {
       query.isActive = isActive === "true";
@@ -181,6 +197,7 @@ export const getUsersByRole = async (req: Request, res: Response, next: NextFunc
       limit: parseInt(limit as string, 10)
     };
 
+    // Fetch users and pagination stats
     const users = await User.find(query)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName")
@@ -214,15 +231,18 @@ export const getUsersByRole = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+// List users with the customer role
 export const getCustomers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { page = 1, limit = 10, search, status } = req.query;
     const customerRole = await Role.findOne({ name: "customer" });
 
+    // Ensure customer role exists
     if (!customerRole) {
       return next(errorHandler(404, "Customer role not found. Please run seed script first."));
     }
 
+    // Build customer filter
     const query: any = { roles: customerRole._id };
 
     if (search) {

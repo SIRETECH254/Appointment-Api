@@ -12,12 +12,14 @@ declare global {
   }
 }
 
+// Verify JWT and attach user to request
 export const authenticateToken = async (
   req: Request,
   _res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
+    // Extract bearer token
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(" ")[1];
 
@@ -25,6 +27,7 @@ export const authenticateToken = async (
       return next(errorHandler(401, "Access token required"));
     }
 
+    // Verify JWT and load user
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
     const user = await User.findById(decoded.userId).populate("roles", "name displayName");
 
@@ -36,6 +39,7 @@ export const authenticateToken = async (
       return next(errorHandler(401, "User account is deactivated"));
     }
 
+    // Normalize role names for easy checks
     const roleNames = user.roles && Array.isArray(user.roles)
       ? user.roles.map((role: any) => role.name || role)
       : [];
@@ -57,13 +61,16 @@ export const authenticateToken = async (
   }
 };
 
+// Ensure user has one of the allowed roles
 export const authorizeRoles = (allowedRoles: string[] = []) => {
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
+      // Require authenticated user
       if (!req.user) {
         return next(errorHandler(401, "Authentication required"));
       }
 
+      // Check if user has any allowed role
       const userRoleNames = req.user.roleNames || [];
       const hasAllowedRole = allowedRoles.some((role) => userRoleNames.includes(role));
 
@@ -78,12 +85,15 @@ export const authorizeRoles = (allowedRoles: string[] = []) => {
   };
 };
 
+// Require admin role for protected actions
 export const requireAdmin = (req: Request, _res: Response, next: NextFunction): void => {
   try {
+    // Require authenticated user
     if (!req.user) {
       return next(errorHandler(401, "Authentication required"));
     }
 
+    // Require admin role
     const userRoleNames = req.user.roleNames || [];
     if (!userRoleNames.includes("admin")) {
       return next(errorHandler(403, "Admin access required"));
@@ -95,18 +105,22 @@ export const requireAdmin = (req: Request, _res: Response, next: NextFunction): 
   }
 };
 
+// Allow owner of resource or admin to proceed
 export const requireOwnershipOrAdmin = (resourceUserIdField: string = "userId") => {
   return (req: Request, _res: Response, next: NextFunction): void => {
     try {
+      // Require authenticated user
       if (!req.user) {
         return next(errorHandler(401, "Authentication required"));
       }
 
+      // Allow admins without ownership checks
       const userRoleNames = req.user.roleNames || [];
       if (userRoleNames.includes("admin")) {
         return next();
       }
 
+      // Compare resource owner id with current user
       const resourceUserId = req.params[resourceUserIdField] || req.body[resourceUserIdField];
       if (!resourceUserId) {
         return next(errorHandler(400, "Resource user ID not found"));
@@ -123,12 +137,15 @@ export const requireOwnershipOrAdmin = (resourceUserIdField: string = "userId") 
   };
 };
 
+// Block access unless email is verified
 export const requireEmailVerification = (req: Request, _res: Response, next: NextFunction): void => {
   try {
+    // Require authenticated user
     if (!req.user) {
       return next(errorHandler(401, "Authentication required"));
     }
 
+    // Require verified email
     if (!req.user.emailVerified) {
       return next(errorHandler(403, "Email verification required"));
     }
@@ -139,8 +156,10 @@ export const requireEmailVerification = (req: Request, _res: Response, next: Nex
   }
 };
 
+// Attach user if token exists, otherwise continue
 export const optionalAuth = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
   try {
+    // Extract token if provided
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(" ")[1];
 
@@ -148,6 +167,7 @@ export const optionalAuth = async (req: Request, _res: Response, next: NextFunct
       return next();
     }
 
+    // Verify token and attach user if valid
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
     const user = await User.findById(decoded.userId).populate("roles", "name displayName");
 

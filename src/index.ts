@@ -93,8 +93,11 @@ app.use(
 
 // Auth, Role, User routes
 app.use("/api/auth", authRoutes);
+
 app.use("/api/roles", roleRoutes);
+
 app.use("/api/users", userRoutes);
+
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app

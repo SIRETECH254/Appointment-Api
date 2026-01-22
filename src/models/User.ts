@@ -108,7 +108,6 @@ const userSchema = new Schema<IUser>(
   }
 );
 
-userSchema.index({ email: 1 });
 userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
 userSchema.index({ company: 1 });
