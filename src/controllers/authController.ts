@@ -11,7 +11,7 @@ import {
   sendOTPNotification,
   sendPasswordResetNotification,
   sendWelcomeNotification
-} from "../services/notificationService";
+} from "../services/internal/notificationService";
 
 // Register new user with OTP and default role assignment
 export const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -98,6 +98,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 
     // Send OTP via email and SMS
     await sendOTPNotification(email, phone, otp, `${firstName} ${lastName}`);
+    
     await user.populate("roles", "name displayName");
 
     res.status(201).json({
