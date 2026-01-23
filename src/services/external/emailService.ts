@@ -120,3 +120,33 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
     throw errorHandler(500, `Failed to send welcome email: ${error.message}`);
   }
 };
+
+export const sendGenericEmail = async (email: string, subject: string, message: string) => {
+  if (!email || !subject || !message) {
+    throw errorHandler(400, "Email, subject, and message are required for sending email");
+  }
+
+  try {
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: fromEmail,
+      to: email,
+      subject,
+      text: message
+    };
+
+    return new Promise((resolve, reject) => {
+      transporter.sendMail(mailOptions, (error: any, info: any) => {
+        if (error) {
+          reject(errorHandler(500, `Failed to send email: ${error.message}`));
+        } else {
+          resolve({ success: true, messageId: info.messageId });
+        }
+      });
+    });
+  } catch (error: any) {
+    console.error("Error sending email:", error);
+    throw errorHandler(500, `Failed to send email: ${error.message}`);
+  }
+};

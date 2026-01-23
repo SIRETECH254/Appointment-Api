@@ -10,6 +10,7 @@ import swaggerConfig from "./config/swagger";
 import authRoutes from "./routes/authRoutes";
 import roleRoutes from "./routes/roleRoutes";
 import userRoutes from "./routes/userRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -98,6 +99,8 @@ app.use("/api/roles", roleRoutes);
 
 app.use("/api/users", userRoutes);
 
+app.use("/api/notifications", notificationRoutes);
+
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app
@@ -120,31 +123,8 @@ io.on("connection", (socket) => {
   // Listen for user authentication to map socket to user
   socket.on("authenticate", (userId: string) => {
     socketConnections.set(userId, socket.id);
+    socket.join(`user_${userId}`);
     console.log(`User ${userId} connected with socket ${socket.id}`);
-  });
-
-  // Listen for project updates
-  socket.on("subscribe-to-project", (projectId: string) => {
-    socket.join(`project_${projectId}`);
-    console.log(`Client subscribed to project updates: ${projectId}`);
-  });
-
-  // Listen for payment status updates
-  socket.on("subscribe-to-payment", (paymentId: string) => {
-    socket.join(`payment_${paymentId}`);
-    console.log(`Client subscribed to payment updates: ${paymentId}`);
-  });
-
-  // Listen for invoice updates
-  socket.on("subscribe-to-invoice", (invoiceId: string) => {
-    socket.join(`invoice_${invoiceId}`);
-    console.log(`Client subscribed to invoice updates: ${invoiceId}`);
-  });
-
-  // Listen for quotation updates
-  socket.on("subscribe-to-quotation", (quotationId: string) => {
-    socket.join(`quotation_${quotationId}`);
-    console.log(`Client subscribed to quotation updates: ${quotationId}`);
   });
 
   socket.on("disconnect", () => {
