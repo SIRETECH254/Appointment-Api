@@ -12,6 +12,25 @@ export interface IRole extends Document {
   updatedAt: Date;
 }
 
+export interface IStoreConfiguration extends Document {
+  _id: Types.ObjectId;
+  appointmentFeeType: "FIXED" | "PERCENTAGE";
+  appointmentFeeValue: number;
+  currency: "KES";
+  minBookingNotice: number;
+  lateGracePeriod: number;
+  allowWalkIns: boolean;
+  notificationSettings: {
+    sendSMS: boolean;
+    sendEmail: boolean;
+    sendPush: boolean;
+    reminderTimes: number[];
+  };
+  businessHoursTimezone: "Africa/Nairobi";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IUser extends Document {
   _id: Types.ObjectId;
   firstName: string;

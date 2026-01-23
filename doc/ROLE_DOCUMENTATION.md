@@ -7,6 +7,7 @@
 - [Role Routes](#role-routes)
 - [Middleware](#middleware)
 - [API Examples](#api-examples)
+- [Scripts](#scripts)
 - [Security Features](#security-features)
 - [Error Handling](#error-handling)
 - [Integration with User System](#integration-with-user-system)
@@ -777,6 +778,21 @@ curl -X GET "http://localhost:4500/api/roles/<roleId>/users?page=1&limit=10" \
   }
 }
 ```
+
+---
+
+## 📜 Scripts
+
+### Seed Roles Script
+**File:** `src/scripts/seedRoles.ts`  
+**Purpose:** Upsert default system roles into the database  
+**Command:**
+```bash
+npm run seed:roles
+```
+**Behavior:**
+- Creates or updates the `customer`, `admin`, and `staff` roles
+- Ensures roles remain active and system-protected
 
 ---
 
