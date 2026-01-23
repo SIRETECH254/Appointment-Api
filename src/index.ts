@@ -12,6 +12,7 @@ import roleRoutes from "./routes/roleRoutes";
 import userRoutes from "./routes/userRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import storeConfigurationRoutes from "./routes/storeConfigurationRoutes";
+import serviceRoutes from "./routes/serviceRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -103,6 +104,8 @@ app.use("/api/users", userRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 app.use("/api/store-configuration", storeConfigurationRoutes);
+
+app.use("/api/services", serviceRoutes);
 
 
 // Socket.io setup for real-time features

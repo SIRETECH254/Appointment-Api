@@ -127,11 +127,10 @@ interface IRole {
 interface IService {
   _id: ObjectId;
   name: string;
-  description?: string;
+  description?: string | null;
   duration: number; // minutes
   fullPrice: number;
-  bufferBefore: number; // minutes
-  bufferAfter: number; // minutes
+  sortOrder: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -309,7 +308,9 @@ interface INotification {
 - `getServices()` - List services
 - `getService()` - Get service by ID
 - `updateService()` - Update service
+- `deleteService()` - Delete service
 - `toggleServiceStatus()` - Activate/deactivate service
+- `assignServicesToStaff()` - Assign multiple services to a staff user
 
 ---
 
@@ -446,6 +447,8 @@ GET    /                          // List services
 GET    /:serviceId                // Get service
 PUT    /:serviceId                // Update service
 PATCH  /:serviceId/toggle-status  // Activate/deactivate
+DELETE /:serviceId               // Delete service
+POST   /assign/:userId            // Assign services to staff (admin)
 ```
 
 ---

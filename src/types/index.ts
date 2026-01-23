@@ -12,6 +12,18 @@ export interface IRole extends Document {
   updatedAt: Date;
 }
 
+export interface IService extends Document {
+  _id: Types.ObjectId;
+  name: string;
+  description?: string | null;
+  duration: number;
+  fullPrice: number;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IStoreConfiguration extends Document {
   _id: Types.ObjectId;
   appointmentFeeType: "FIXED" | "PERCENTAGE";
