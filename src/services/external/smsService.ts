@@ -154,3 +154,43 @@ export const sendWelcomeSMS = async (phone: string, name: string) => {
     return { success: false, error: error.message };
   }
 };
+
+export const sendGenericSMS = async (phone: string, message: string) => {
+  if (!phone || !message) {
+    throw errorHandler(400, "Phone number and message are required for sending SMS");
+  }
+
+  if (!sms) {
+    throw errorHandler(500, "SMS service not initialized - check Africa's Talking credentials");
+  }
+
+  try {
+    const formattedPhone = formatPhoneNumber(phone);
+    const options: any = {
+      to: [formattedPhone],
+      message
+    };
+
+    if (process.env.SMS_SENDER_ID) {
+      options.from = process.env.SMS_SENDER_ID;
+    }
+
+    const result = await sms.send(options);
+
+    if (result?.SMSMessageData?.Recipients?.[0]?.status === "Success") {
+      return {
+        success: true,
+        messageId: result.SMSMessageData.Recipients[0].messageId,
+        cost: result.SMSMessageData.Recipients[0].cost
+      };
+    }
+
+    return {
+      success: false,
+      error: result?.SMSMessageData?.Recipients?.[0]?.status || "Unknown SMS status"
+    };
+  } catch (error: any) {
+    console.error("Error sending SMS:", error);
+    throw errorHandler(500, `Failed to send SMS: ${error.message}`);
+  }
+};

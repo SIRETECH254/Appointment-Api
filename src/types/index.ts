@@ -79,3 +79,42 @@ export interface IUserResponse {
   createdAt?: Date;
   updatedAt?: Date;
 }
+
+export interface NotificationAction {
+  id: string;
+  label: string;
+  type: "api" | "navigate" | "modal" | "confirm";
+  endpoint?: string;
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  payload?: Record<string, any>;
+  route?: string;
+  modal?: string;
+  variant?: "primary" | "secondary" | "danger" | "success";
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+export interface NotificationContext {
+  resourceId: string;
+  resourceType: string;
+  additionalData?: Record<string, any>;
+}
+
+export interface INotification extends Document {
+  _id: Types.ObjectId;
+  recipient: Types.ObjectId;
+  recipientModel: "User";
+  type: "email" | "sms" | "in_app";
+  category: "general" | "appointment" | "payment";
+  subject: string;
+  message: string;
+  status: "pending" | "sent" | "failed";
+  sentAt?: Date;
+  readAt?: Date;
+  actions?: NotificationAction[];
+  context?: NotificationContext;
+  expiresAt?: Date;
+  metadata?: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+}

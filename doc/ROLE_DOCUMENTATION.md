@@ -120,176 +120,379 @@ export default Role;
 
 ### Required Imports
 ```typescript
-import { Request, Response, NextFunction } from 'express';
-import { errorHandler } from '../middleware/errorHandler';
-import Role from '../models/Role';
-import User from '../models/User';
+import type { Request, Response, NextFunction } from "express";
+import { errorHandler } from "../middleware/errorHandler";
+import Role from "../models/Role";
+import User from "../models/User";
 ```
 
-### Controller Implementations
+### Functions Overview
 
+#### `getAllRoles(query)`
+**Purpose:** List roles with optional filters  
+**Access:** Admin  
+**Validation:** Optional `isActive` and `search` filters  
+**Process:**
+- Build query filters for status/search
+- Return sorted roles list
+**Response:** Array of roles
+
+**Controller Implementation:**
 ```typescript
-// Get all roles with filters (admin)
-export const getAllRoles = async (req, res, next) => {
-  const { isActive, search } = req.query;
-  const query = {};
+export const getAllRoles = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { isActive, search } = req.query;
+    const query: any = {};
 
-  if (isActive !== undefined) query.isActive = isActive === 'true';
+    // Optional filters
+    if (isActive !== undefined) {
+      query.isActive = isActive === "true";
+    }
 
-  if (search) query.$or = [
-    { name: { $regex: search, $options: 'i' } },
-    { displayName: { $regex: search, $options: 'i' } },
-    { description: { $regex: search, $options: 'i' } }
-  ];
+    // Search by name/display/description
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { displayName: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } }
+      ];
+    }
 
-  const roles = await Role.find(query).sort({ name: 1 });
+    const roles = await Role.find(query).sort({ name: 1 });
 
-  res.status(200).json({ success: true, data: { roles } });
-};
-
-// Create a custom role (admin)
-export const createRole = async (req, res, next) => {
-  const { name, displayName, description, permissions, isActive } = req.body;
-
-  const existingRole = await Role.findOne({ name: name.toLowerCase() });
-  if (existingRole) return next(errorHandler(400, 'Role with this name already exists'));
-
-  const role = new Role({
-    name: name.toLowerCase(),
-    displayName,
-    description,
-    permissions: permissions || [],
-    isActive: isActive !== undefined ? isActive : true,
-    isSystemRole: false
-  });
-
-  await role.save();
-
-  res.status(201).json({ success: true, message: 'Role created successfully', data: { role } });
-};
-```
-
-```typescript
-// Get role by ID (admin)
-export const getRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const role = await Role.findById(roleId);
-
-  if (!role) return next(errorHandler(404, 'Role not found'));
-
-  res.status(200).json({ success: true, data: { role } });
-};
-```
-
-```typescript
-// Update existing role (admin)
-export const updateRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const { displayName, description, permissions, isActive } = req.body;
-  const role = await Role.findById(roleId);
-
-  if (!role) return next(errorHandler(404, 'Role not found'));
-
-  if (role.isSystemRole && req.body.name && req.body.name !== role.name) {
-    return next(errorHandler(400, 'Cannot change system role name'));
+    res.status(200).json({
+      success: true,
+      data: { roles }
+    });
+  } catch (error: any) {
+    console.error("Get all roles error:", error);
+    next(errorHandler(500, "Server error while fetching roles"));
   }
-
-  if (displayName) role.displayName = displayName;
-  if (description !== undefined) role.description = description;
-  if (permissions !== undefined) role.permissions = permissions;
-  if (isActive !== undefined) role.isActive = isActive;
-
-  await role.save();
-
-  res.status(200).json({ success: true, message: 'Role updated successfully', data: { role } });
 };
 ```
 
+#### `getRole(roleId)`
+**Purpose:** Fetch a single role  
+**Access:** Admin  
+**Validation:** Role must exist  
+**Process:** Fetch role by id  
+**Response:** Role details
+
+**Controller Implementation:**
 ```typescript
-// Delete role if it is not a system role and unused (admin)
-export const deleteRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const role = await Role.findById(roleId);
+export const getRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { roleId } = req.params;
+    const role = await Role.findById(roleId);
 
-  if (!role) return next(errorHandler(404, 'Role not found'));
+    // Ensure role exists
+    if (!role) {
+      return next(errorHandler(404, "Role not found"));
+    }
 
-  if (role.isSystemRole) return next(errorHandler(400, 'Cannot delete system roles'));
-
-  const usersWithRole = await User.countDocuments({ roles: roleId });
-  if (usersWithRole > 0) {
-    return next(errorHandler(400, `Cannot delete role. ${usersWithRole} user(s) have this role assigned. Please reassign users first.`));
+    res.status(200).json({
+      success: true,
+      data: { role }
+    });
+  } catch (error: any) {
+    console.error("Get role error:", error);
+    next(errorHandler(500, "Server error while fetching role"));
   }
-
-  await Role.findByIdAndDelete(roleId);
-
-  res.status(200).json({ success: true, message: 'Role deleted successfully' });
 };
 ```
 
+#### `createRole(roleData)`
+**Purpose:** Create a new custom role  
+**Access:** Admin  
+**Validation:**
+- Name and display name required
+- Role name must be unique
+**Process:** Create a non-system role with permissions  
+**Response:** Newly created role
+
+**Controller Implementation:**
 ```typescript
-// Get users assigned to a role (admin)
-export const getUsersByRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const { page = 1, limit = 10, search, isActive } = req.query;
-  const role = await Role.findById(roleId);
+export const createRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, displayName, description, permissions, isActive } = req.body;
 
-  if (!role) return next(errorHandler(404, 'Role not found'));
+    // Validate required fields
+    if (!name || !displayName) {
+      return next(errorHandler(400, "Name and display name are required"));
+    }
 
-  const query = { roles: roleId };
-  if (isActive !== undefined) query.isActive = isActive === 'true';
-  if (search) {
-    query.$or = [
-      { firstName: { $regex: search, $options: 'i' } },
-      { lastName: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } }
-    ];
+    // Ensure role name is unique
+    const existingRole = await Role.findOne({ name: name.toLowerCase() });
+    if (existingRole) {
+      return next(errorHandler(400, "Role with this name already exists"));
+    }
+
+    // Create a non-system role
+    const role = new Role({
+      name: name.toLowerCase(),
+      displayName,
+      description,
+      permissions: permissions || [],
+      isActive: isActive !== undefined ? isActive : true,
+      isSystemRole: false
+    });
+
+    await role.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Role created successfully",
+      data: { role }
+    });
+  } catch (error: any) {
+    console.error("Create role error:", error);
+    next(errorHandler(500, "Server error while creating role"));
   }
-
-  const users = await User.find(query)
-    .select('-password -otpCode -resetPasswordToken')
-    .populate('roles', 'name displayName')
-    .sort({ createdAt: 'desc' })
-    .limit(Number(limit))
-    .skip((Number(page) - 1) * Number(limit));
-
-  const total = await User.countDocuments(query);
-
-  res.status(200).json({ success: true, data: { role: { id: role._id, name: role.name, displayName: role.displayName }, users, pagination: { currentPage: Number(page), totalPages: Math.ceil(total / Number(limit)), totalUsers: total, hasNextPage: Number(page) < Math.ceil(total / Number(limit)), hasPrevPage: Number(page) > 1 } } });
 };
 ```
 
+#### `updateRole(roleId, updates)`
+**Purpose:** Update role metadata or permissions  
+**Access:** Admin  
+**Validation:**
+**Validation:**
+- Role must exist
+- System role names cannot be changed
+**Process:** Apply updates and persist  
+**Response:** Updated role
+
+**Controller Implementation:**
 ```typescript
-// Get customers (users with customer role) (admin)
-export const getCustomers = async (req, res, next) => {
-  const { page = 1, limit = 10, search, status } = req.query;
-  const customerRole = await Role.findOne({ name: 'customer' });
+export const updateRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { roleId } = req.params;
+    const { displayName, description, permissions, isActive } = req.body;
 
-  if (!customerRole) return next(errorHandler(404, 'Customer role not found. Please run seed script first.'));
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return next(errorHandler(404, "Role not found"));
+    }
 
-  const query = { roles: customerRole._id };
-  if (search) {
-    query.$or = [
-      { firstName: { $regex: search, $options: 'i' } },
-      { lastName: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } }
-    ];
+    // Block renaming system roles
+    if (role.isSystemRole && req.body.name && req.body.name !== role.name) {
+      return next(errorHandler(400, "Cannot change system role name"));
+    }
+
+    if (displayName) role.displayName = displayName;
+    if (description !== undefined) role.description = description;
+    if (permissions !== undefined) role.permissions = permissions;
+    if (isActive !== undefined) role.isActive = isActive;
+
+    await role.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Role updated successfully",
+      data: { role }
+    });
+  } catch (error: any) {
+    console.error("Update role error:", error);
+    next(errorHandler(500, "Server error while updating role"));
   }
+};
+```
 
-  if (status === 'active') query.isActive = true;
-  else if (status === 'inactive') query.isActive = false;
-  if (status === 'verified') query.emailVerified = true;
-  else if (status === 'unverified') query.emailVerified = false;
+#### `deleteRole(roleId)`
+**Purpose:** Delete a non-system role  
+**Access:** Admin  
+**Validation:**
+- Role must exist and not be system role
+- No users should reference the role
+**Process:** Delete role by id  
+**Response:** Success confirmation
 
-  const customers = await User.find(query)
-    .select('-password -otpCode -resetPasswordToken')
-    .populate('roles', 'name displayName')
-    .sort({ createdAt: 'desc' })
-    .limit(Number(limit))
-    .skip((Number(page) - 1) * Number(limit));
+**Controller Implementation:**
+```typescript
+export const deleteRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { roleId } = req.params;
+    const role = await Role.findById(roleId);
 
-  const total = await User.countDocuments(query);
+    if (!role) {
+      return next(errorHandler(404, "Role not found"));
+    }
 
-  res.status(200).json({ success: true, data: { customers, pagination: { currentPage: Number(page), totalPages: Math.ceil(total / Number(limit)), totalCustomers: total, hasNextPage: Number(page) < Math.ceil(total / Number(limit)), hasPrevPage: Number(page) > 1 } } });
+    // Prevent deleting system roles
+    if (role.isSystemRole) {
+      return next(errorHandler(400, "Cannot delete system roles"));
+    }
+
+    // Ensure no users still reference this role
+    const usersWithRole = await User.countDocuments({ roles: roleId });
+    if (usersWithRole > 0) {
+      return next(
+        errorHandler(
+          400,
+          `Cannot delete role. ${usersWithRole} user(s) have this role assigned. Please reassign users first.`
+        )
+      );
+    }
+
+    await Role.findByIdAndDelete(roleId);
+
+    res.status(200).json({
+      success: true,
+      message: "Role deleted successfully"
+    });
+  } catch (error: any) {
+    console.error("Delete role error:", error);
+    next(errorHandler(500, "Server error while deleting role"));
+  }
+};
+```
+
+#### `getUsersByRole(roleId, query)`
+**Purpose:** List users assigned to a role  
+**Access:** Admin  
+**Validation:** Role must exist  
+**Process:** Filter users by role with pagination  
+**Response:** Users + pagination
+
+**Controller Implementation:**
+```typescript
+export const getUsersByRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { roleId } = req.params;
+    const { page = 1, limit = 10, search, isActive } = req.query;
+
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return next(errorHandler(404, "Role not found"));
+    }
+
+    // Build query with filters
+    const query: any = { roles: roleId };
+    if (isActive !== undefined) {
+      query.isActive = isActive === "true";
+    }
+
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Fetch users and pagination stats
+    const users = await User.find(query)
+      .select("-password -otpCode -resetPasswordToken")
+      .populate("roles", "name displayName")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        role: {
+          id: role._id,
+          name: role.name,
+          displayName: role.displayName
+        },
+        users,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalUsers: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error("Get users by role error:", error);
+    next(errorHandler(500, "Server error while fetching users by role"));
+  }
+};
+```
+
+#### `getCustomers(query)`
+**Purpose:** List users with customer role  
+**Access:** Admin/Staff  
+**Validation:**
+- Customer role must exist
+**Process:** Filter customers with pagination and status filters  
+**Response:** Users + pagination
+
+**Controller Implementation:**
+```typescript
+export const getCustomers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { page = 1, limit = 10, search, status } = req.query;
+    const customerRole = await Role.findOne({ name: "customer" });
+
+    // Ensure customer role exists
+    if (!customerRole) {
+      return next(errorHandler(404, "Customer role not found. Please run seed script first."));
+    }
+
+    // Build customer filter
+    const query: any = { roles: customerRole._id };
+
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    if (status === "active") {
+      query.isActive = true;
+    } else if (status === "inactive") {
+      query.isActive = false;
+    }
+
+    if (status === "verified") {
+      query.emailVerified = true;
+    } else if (status === "unverified") {
+      query.emailVerified = false;
+    }
+
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    const customers = await User.find(query)
+      .select("-password -otpCode -resetPasswordToken")
+      .populate("roles", "name displayName")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        customers,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalCustomers: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error("Get customers error:", error);
+    next(errorHandler(500, "Server error while fetching customers"));
+  }
 };
 ```
 
