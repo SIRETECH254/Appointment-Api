@@ -66,25 +66,25 @@
 ```typescript
 interface IUser {
   _id: ObjectId;
-  fullName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string; // hashed
+  roles: ObjectId[]; // Role references
   phone: string;
-  email?: string;
-  role: "ADMIN" | "STAFF" | "CUSTOMER";
+  address?: string;
+  city?: string;
+  country?: string;
   isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
----
-
-### 2. Staff Model
-```typescript
-interface IStaff {
-  _id: ObjectId;
-  userId: ObjectId;
-  services: ObjectId[];
-  workingHours: {
+  emailVerified: boolean;
+  avatar?: string;
+  otpCode?: string;
+  otpExpiry?: Date;
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  lastLoginAt?: Date;
+  services?: ObjectId[];
+  workingHours?: {
     monday: Array<{ start: string; end: string }>;
     tuesday: Array<{ start: string; end: string }>;
     wednesday: Array<{ start: string; end: string }>;
@@ -93,7 +93,28 @@ interface IStaff {
     saturday: Array<{ start: string; end: string }>;
     sunday: Array<{ start: string; end: string }>;
   };
+  notificationPreferences?: {
+    email?: boolean;
+    sms?: boolean;
+    inApp?: boolean;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+---
+
+### 2. Role Model
+```typescript
+interface IRole {
+  _id: ObjectId;
+  name: string; // customer | admin | staff
+  displayName: string;
+  description?: string;
+  permissions: string[];
   isActive: boolean;
+  isSystemRole: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -143,7 +164,7 @@ interface IStoreConfiguration {
 
 ---
 
-### 5. Appointment Model
+### 6. Appointment Model
 ```typescript
 interface IAppointment {
   _id: ObjectId;
@@ -169,7 +190,7 @@ db.appointments.createIndex({ staffId: 1, startTime: 1, endTime: 1 })
 
 ---
 
-### 6. Payment Model
+### 7. Payment Model
 ```typescript
 interface IPayment {
   _id: ObjectId;
@@ -186,7 +207,7 @@ interface IPayment {
 
 ---
 
-### 7. Break Model
+### 8. Break Model
 ```typescript
 interface IBreak {
   _id: ObjectId;
@@ -200,7 +221,7 @@ interface IBreak {
 
 ---
 
-### 8. Notification Model
+### 9. Notification Model
 ```typescript
 interface INotification {
   _id: ObjectId;
@@ -223,26 +244,53 @@ interface INotification {
 
 #### `authController.ts`
 - `register()` - Create user account (admin, staff, or customer)
+- `verifyOTP()` - Verify OTP and activate account
+- `resendOTP()` - Resend OTP for verification
 - `login()` - Authenticate with phone/email and password
+- `forgotPassword()` - Request password reset
+- `resetPassword()` - Reset password with token
 - `refreshToken()` - Renew JWT access token
 - `logout()` - Invalidate session
 - `getMe()` - Get current user profile
 
 ---
 
-### 2. User Controllers
+### 2. Role Controllers
 
-#### `userController.ts`
-- `getUsers()` - Admin list of users
-- `getUser()` - Get user by ID
-- `updateUser()` - Update user profile or role
-- `deactivateUser()` - Soft disable user
-- `getProfile()` - Get authenticated user's profile
-- `updateProfile()` - Update own profile details
+#### `roleController.ts`
+- `getAllRoles()` - List roles (admin)
+- `getRole()` - Get role by ID (admin)
+- `createRole()` - Create role (admin)
+- `updateRole()` - Update role (admin)
+- `deleteRole()` - Delete role (admin)
+- `getUsersByRole()` - List users by role (admin)
+- `getCustomers()` - List customers (admin)
 
 ---
 
-### 3. Staff Controllers
+### 3. User Controllers
+
+#### `userController.ts`
+- `getUserProfile()` - Get authenticated user's profile
+- `updateUserProfile()` - Update own profile details
+- `changePassword()` - Change password
+- `getNotificationPreferences()` - Get notification preferences
+- `updateNotificationPreferences()` - Update notification preferences
+- `getAllUsers()` - Admin list of users
+- `getUserById()` - Get user by ID (admin)
+- `updateUser()` - Update user profile (admin)
+- `updateUserStatus()` - Activate/deactivate user (admin)
+- `setUserAdmin()` - Set user admin role (admin, deprecated)
+- `getUserRoles()` - Get user roles (admin)
+- `deleteUser()` - Delete user (admin)
+- `adminCreateCustomer()` - Admin create customer
+- `assignRole()` - Assign role to user (admin)
+- `removeRole()` - Remove role from user (admin)
+- `getCustomers()` - List customers (admin)
+
+---
+
+### 4. Staff Controllers
 
 #### `staffController.ts`
 - `createStaff()` - Create staff record for a user
@@ -254,7 +302,7 @@ interface INotification {
 
 ---
 
-### 4. Service Controllers
+### 5. Service Controllers
 
 #### `serviceController.ts`
 - `createService()` - Create a new service
@@ -265,7 +313,7 @@ interface INotification {
 
 ---
 
-### 5. Availability Controllers
+### 6. Availability Controllers
 
 #### `availabilityController.ts`
 - `getAvailableSlots()` - Calculate available slots for staff + service + date
@@ -273,7 +321,7 @@ interface INotification {
 
 ---
 
-### 6. Appointment Controllers
+### 7. Appointment Controllers
 
 #### `appointmentController.ts`
 - `createAppointment()` - Book an appointment (pending)
@@ -288,7 +336,7 @@ interface INotification {
 
 ---
 
-### 7. Payment Controllers
+### 8. Payment Controllers
 
 #### `paymentController.ts`
 - `initiatePayment()` - Start booking fee or full payment
@@ -298,7 +346,7 @@ interface INotification {
 
 ---
 
-### 8. Notification Controllers
+### 9. Notification Controllers
 
 #### `notificationController.ts`
 - `scheduleReminders()` - Schedule appointment reminders
@@ -308,7 +356,7 @@ interface INotification {
 
 ---
 
-### 9. Store Configuration Controllers
+### 10. Store Configuration Controllers
 
 #### `storeConfigController.ts`
 - `getConfig()` - Get store configuration
@@ -323,10 +371,29 @@ Base: `/api/auth`
 
 ```typescript
 POST   /register                  // Register user
+POST   /verify-otp                // Verify OTP
+POST   /resend-otp                // Resend OTP
 POST   /login                     // Login
+POST   /forgot-password           // Request password reset
+POST   /reset-password/:token     // Reset password
 POST   /refresh-token             // Refresh JWT
 POST   /logout                    // Logout
 GET    /me                        // Current user profile
+```
+
+---
+
+### Role Routes
+Base: `/api/roles`
+
+```typescript
+GET    /                          // Get all roles (admin)
+GET    /:roleId                   // Get single role (admin)
+POST   /                          // Create role (admin)
+PUT    /:roleId                   // Update role (admin)
+DELETE /:roleId                   // Delete role (admin)
+GET    /:roleId/users             // Get users by role (admin)
+GET    /customer/users            // Get customers (admin)
 ```
 
 ---
@@ -335,12 +402,22 @@ GET    /me                        // Current user profile
 Base: `/api/users`
 
 ```typescript
+GET    /profile                   // My profile
+PUT    /profile                   // Update my profile
+PUT    /change-password           // Change password
+GET    /notifications             // Get notification preferences
+PUT    /notifications             // Update notification preferences
+POST   /admin-create              // Admin create customer
+GET    /customers                 // List customers (admin)
 GET    /                          // List users (admin)
 GET    /:userId                   // Get user by ID (admin)
 PUT    /:userId                   // Update user (admin)
-PATCH  /:userId/deactivate        // Deactivate user (admin)
-GET    /profile                   // My profile
-PUT    /profile                   // Update my profile
+PUT    /:userId/status            // Update user status (admin)
+PUT    /:userId/admin             // Set user admin role (admin)
+GET    /:userId/roles             // Get user roles (admin)
+DELETE /:userId                   // Delete user (admin)
+POST   /:userId/roles             // Assign role (admin)
+DELETE /:userId/roles/:roleId     // Remove role (admin)
 ```
 
 ---
@@ -450,6 +527,7 @@ appointment-api/
 │   ├── config/
 │   │   ├── swagger.ts             # Swagger documentation config
 │   ├── models/
+│   │   ├── Role.ts
 │   │   ├── User.ts
 │   │   ├── Staff.ts
 │   │   ├── Service.ts
@@ -460,6 +538,7 @@ appointment-api/
 │   │   └── Notification.ts
 │   ├── controllers/
 │   │   ├── authController.ts
+│   │   ├── roleController.ts
 │   │   ├── userController.ts
 │   │   ├── staffController.ts
 │   │   ├── serviceController.ts
@@ -470,6 +549,7 @@ appointment-api/
 │   │   └── storeConfigController.ts
 │   ├── routes/
 │   │   ├── authRoutes.ts
+│   │   ├── roleRoutes.ts
 │   │   ├── userRoutes.ts
 │   │   ├── staffRoutes.ts
 │   │   ├── serviceRoutes.ts
@@ -489,9 +569,11 @@ appointment-api/
 │   │   └── notificationService.ts # Reminders and notifications
 │   ├── jobs/
 │   │   └── reminderScheduler.ts   # Cron-based reminder jobs
+│   ├── scripts/
+│   │   └── seedRoles.ts           # Seed default roles
 │   ├── utils/
 │   │   ├── time.ts                # Timezone and time helpers
-│   │   └── tokens.ts              # JWT helpers
+│   │   └── authHelpers.ts         # JWT + OTP helpers
 │   └── index.ts                   # App entry point
 ├── doc/                           # Documentation
 ├── .env                           # Environment variables
@@ -586,7 +668,7 @@ AFRICAS_TALKING_USERNAME=your_username
    - JWT-based authentication
    - Password hashing with bcryptjs
 2. Authorization
-   - Role-based access control (ADMIN, STAFF, CUSTOMER)
+   - Role-based access control (admin, staff, customer)
 3. API Security
    - CORS allowlist
    - Rate limiting for auth and payments
