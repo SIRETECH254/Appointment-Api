@@ -24,6 +24,31 @@ export interface IService extends Document {
   updatedAt: Date;
 }
 
+export interface IAppointment extends Document {
+  _id: Types.ObjectId;
+  customerId: Types.ObjectId;
+  staffId: Types.ObjectId;
+  serviceId: Types.ObjectId;
+  startTime: Date;
+  endTime: Date;
+  status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+  bookingFeeAmount: number;
+  remainingAmount: number;
+  checkedInAt?: Date;
+  actualEndTime?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IBreak extends Document {
+  _id: Types.ObjectId;
+  staffId: Types.ObjectId;
+  startTime: Date;
+  endTime: Date;
+  reason?: string;
+  createdAt: Date;
+}
+
 export interface IStoreConfiguration extends Document {
   _id: Types.ObjectId;
   appointmentFeeType: "FIXED" | "PERCENTAGE";

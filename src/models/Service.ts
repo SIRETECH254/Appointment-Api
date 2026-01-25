@@ -40,7 +40,6 @@ const serviceSchema = new Schema<IService>(
   { timestamps: true }
 );
 
-serviceSchema.index({ name: 1 });
 serviceSchema.index({ isActive: 1 });
 serviceSchema.index({ sortOrder: 1 });
 

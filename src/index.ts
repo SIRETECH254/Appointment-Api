@@ -13,6 +13,8 @@ import userRoutes from "./routes/userRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import storeConfigurationRoutes from "./routes/storeConfigurationRoutes";
 import serviceRoutes from "./routes/serviceRoutes";
+import availabilityRoutes from "./routes/availabilityRoutes";
+import breakRoutes from "./routes/breakRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -107,6 +109,10 @@ app.use("/api/store-configuration", storeConfigurationRoutes);
 
 app.use("/api/services", serviceRoutes);
 
+app.use("/api/availability", availabilityRoutes);
+
+app.use("/api/breaks", breakRoutes);
+
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app
@@ -146,6 +152,7 @@ io.on("connection", (socket) => {
 });
 
 app.set("io", io);
+
 app.set("socketConnections", socketConnections);
 
 // Main API endpoint
