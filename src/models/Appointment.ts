@@ -13,11 +13,13 @@ const appointmentSchema = new Schema<IAppointment>(
       ref: "User",
       required: [true, "Staff is required"]
     },
-    serviceId: {
-      type: Schema.Types.ObjectId,
-      ref: "Service",
-      required: [true, "Service is required"]
-    },
+    services: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Service",
+        required: [true, "Service is required"]
+      }
+    ],
     startTime: {
       type: Date,
       required: [true, "Start time is required"]
@@ -56,7 +58,7 @@ const appointmentSchema = new Schema<IAppointment>(
 
 appointmentSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
 appointmentSchema.index({ customerId: 1, startTime: 1 });
-appointmentSchema.index({ serviceId: 1 });
+appointmentSchema.index({ services: 1 });
 
 const Appointment = mongoose.model<IAppointment>("Appointment", appointmentSchema);
 

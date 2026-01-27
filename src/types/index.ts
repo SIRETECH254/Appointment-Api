@@ -28,7 +28,7 @@ export interface IAppointment extends Document {
   _id: Types.ObjectId;
   customerId: Types.ObjectId;
   staffId: Types.ObjectId;
-  serviceId: Types.ObjectId;
+  services: Types.ObjectId[];
   startTime: Date;
   endTime: Date;
   status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -36,6 +36,24 @@ export interface IAppointment extends Document {
   remainingAmount: number;
   checkedInAt?: Date;
   actualEndTime?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IPayment extends Document {
+  _id: Types.ObjectId;
+  appointmentId: Types.ObjectId;
+  paymentNumber: string;
+  amount: number;
+  currency: "KES";
+  type: "BOOKING_FEE" | "FULL_PAYMENT";
+  method: "MPESA" | "CARD" | "CASH";
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  transactionRef?: string;
+  processorRefs?: {
+    daraja?: { merchantRequestId?: string; checkoutRequestId?: string };
+    paystack?: { reference?: string };
+  };
   createdAt: Date;
   updatedAt: Date;
 }

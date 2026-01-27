@@ -169,7 +169,7 @@ interface IAppointment {
   _id: ObjectId;
   customerId: ObjectId;
   staffId: ObjectId;
-  serviceId: ObjectId;
+  services: ObjectId[];
   startTime: Date;
   endTime: Date;
   status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -194,13 +194,19 @@ db.appointments.createIndex({ staffId: 1, startTime: 1, endTime: 1 })
 interface IPayment {
   _id: ObjectId;
   appointmentId: ObjectId;
+  paymentNumber: string;
   amount: number;
   currency: "KES";
   type: "BOOKING_FEE" | "FULL_PAYMENT";
   method: "MPESA" | "CARD" | "CASH";
   status: "PENDING" | "SUCCESS" | "FAILED";
   transactionRef?: string;
+  processorRefs?: {
+    daraja?: { merchantRequestId?: string; checkoutRequestId?: string };
+    paystack?: { reference?: string };
+  };
   createdAt: Date;
+  updatedAt: Date;
 }
 ```
 
@@ -341,7 +347,8 @@ interface INotification {
 
 #### `paymentController.ts`
 - `initiatePayment()` - Start booking fee or full payment
-- `paymentWebhook()` - Payment provider callback handler
+- `mpesaWebhook()` - M-Pesa (Daraja) callback handler
+- `paystackWebhook()` - Paystack callback handler
 - `getPayments()` - List payments
 - `getPayment()` - Get single payment
 
@@ -485,7 +492,8 @@ Base: `/api/payments`
 
 ```typescript
 POST   /initiate                  // Initiate payment
-POST   /webhook                   // Payment webhook
+POST   /webhooks/mpesa            // M-Pesa webhook
+POST   /webhooks/paystack         // Paystack webhook
 GET    /                          // List payments
 GET    /:paymentId                // Get payment
 ```

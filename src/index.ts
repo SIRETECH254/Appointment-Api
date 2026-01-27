@@ -15,6 +15,8 @@ import storeConfigurationRoutes from "./routes/storeConfigurationRoutes";
 import serviceRoutes from "./routes/serviceRoutes";
 import availabilityRoutes from "./routes/availabilityRoutes";
 import breakRoutes from "./routes/breakRoutes";
+import appointmentRoutes from "./routes/appointmentRoutes";
+import paymentRoutes from "./routes/paymentRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -112,6 +114,10 @@ app.use("/api/services", serviceRoutes);
 app.use("/api/availability", availabilityRoutes);
 
 app.use("/api/breaks", breakRoutes);
+
+app.use("/api/appointments", appointmentRoutes);
+
+app.use("/api/payments", paymentRoutes);
 
 
 // Socket.io setup for real-time features
