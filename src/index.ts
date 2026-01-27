@@ -22,7 +22,7 @@ const app = express();
 const PORT = process.env.PORT || 4500;
 
 // CORS Configuration with explicit origins
-const allowedOrigins = [
+const allowedOrigins: string[] = [
   "http://localhost:8081",
   "http://localhost:8082",
   "http://localhost:8083",
@@ -30,6 +30,11 @@ const allowedOrigins = [
   "http://localhost:8085",
   "http://localhost:4500"
 ];
+
+// Add CALLBACK_URL if it exists
+if (process.env.CALLBACK_URL) {
+  allowedOrigins.push(process.env.CALLBACK_URL);
+}
 
 // CORS middleware configuration
 app.use(

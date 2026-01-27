@@ -11,7 +11,6 @@ const paymentSchema = new Schema<IPayment>(
     paymentNumber: {
       type: String,
       required: true,
-      unique: true,
       trim: true
     },
     amount: {

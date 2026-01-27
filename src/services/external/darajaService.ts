@@ -43,6 +43,36 @@ export const buildPassword = (shortCode: string, passkey: string, timestamp: str
   return Buffer.from(`${shortCode}${passkey}${timestamp}`).toString("base64");
 };
 
+export const normalizePhoneNumber = (phone: string): string => {
+  // Remove all non-digit characters
+  const digitsOnly = String(phone).replace(/[^0-9]/g, "");
+  let msisdn = digitsOnly;
+
+  // If starts with 0, replace with 254
+  if (msisdn.startsWith("0")) {
+    msisdn = `254${msisdn.slice(1)}`;
+  }
+
+  // If doesn't start with 254, check if original had 254
+  if (!msisdn.startsWith("254")) {
+    if (digitsOnly.startsWith("254")) {
+      msisdn = digitsOnly;
+    } else {
+      // If it's a 9-digit number, assume it's missing the 254 prefix
+      if (digitsOnly.length === 9) {
+        msisdn = `254${digitsOnly}`;
+      }
+    }
+  }
+
+  // Validate format: 254 followed by 9 digits
+  if (!/^254\d{9}$/.test(msisdn)) {
+    throw new Error(`Invalid Kenyan phone format. Expected format: 254XXXXXXXXX, received: ${phone}`);
+  }
+
+  return msisdn;
+};
+
 export interface StkPushParams {
   amount: number;
   phone: string;
@@ -61,6 +91,8 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
   const callbackUrl = (process.env.CALLBACK_URL || "").trim();
   const partyB = shortCode;
 
+  console.log("Callback URL:", callbackUrl);
+
   if (!shortCode || !passkey) {
     throw new Error("Daraja short code or passkey not configured");
   }
@@ -74,15 +106,18 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
   const timestamp = buildTimestamp();
   const password = buildPassword(shortCode, passkey, timestamp);
 
+  // Normalize phone number to 254XXXXXXXXX format
+  const normalizedPhone = normalizePhoneNumber(params.phone);
+
   const payload = {
     BusinessShortCode: Number(shortCode),
     Password: password,
     Timestamp: timestamp,
     TransactionType: "CustomerPayBillOnline",
     Amount: Math.round(params.amount),
-    PartyA: params.phone,
+    PartyA: normalizedPhone,
     PartyB: Number(partyB),
-    PhoneNumber: params.phone,
+    PhoneNumber: normalizedPhone,
     CallBackURL: callbackUrl,
     AccountReference: String(params.accountReference),
     TransactionDesc: "Appointment payment"
