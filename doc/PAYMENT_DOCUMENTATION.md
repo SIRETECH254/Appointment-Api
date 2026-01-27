@@ -31,7 +31,7 @@ Key flow:
 ```typescript
 interface IPayment {
   _id: ObjectId;
-  appointmentId: ObjectId;
+  appointmentId?: ObjectId;
   paymentNumber: string;
   amount: number;
   currency: "KES";
@@ -50,12 +50,12 @@ interface IPayment {
 
 ### Model Notes
 - `paymentNumber` is generated using a running yearly sequence (SIRE-style).
-- `appointmentId` replaces the invoice reference.
+- `appointmentId` is optional - can be null for service-only payments (no appointment)
 - `processorRefs` stores gateway IDs for later reconciliation.
 
 ### Validation Rules
 ```typescript
-appointmentId: { required: true, ref: "Appointment" }
+appointmentId: { required: false, ref: "Appointment" }
 paymentNumber: { required: true, unique: true }
 amount:        { required: true, min: 0 }
 currency:      { enum: ["KES"], default: "KES" }
@@ -80,7 +80,9 @@ import {
   createPaymentRecord,
   applySuccessfulPayment,
   initiateMpesaForAppointment,
-  initiatePaystackForAppointment
+  initiatePaystackForAppointment,
+  initiateMpesaForService,
+  initiatePaystackForService
 } from "../services/internal/paymentService";
 import { parseCallback } from "../services/external/darajaService";
 import { parseWebhook, verifyTransaction } from "../services/external/paystackService";
@@ -89,15 +91,18 @@ import { parseWebhook, verifyTransaction } from "../services/external/paystackSe
 ### Functions Overview
 
 #### `initiatePayment()`
-**Purpose:** Start a booking fee or full payment  
+**Purpose:** Start a service-only payment (no appointment required)  
 **Access:** Customer/Admin  
 **Validation:**
-- Appointment exists and is payable
-- Amount is valid for remaining balance
+- `services` array is required (must contain at least one service)
+- All services must exist and be active
+- Payment amount is calculated from the total of selected services
 - `phone` required for MPESA, `email` required for CARD
+- No appointment is required - this is for standalone service payments
 **Process:**
-- Create payment record (`PENDING`)
-- Call Daraja STK push or Paystack initialize
+- Fetch service documents and calculate total amount from service prices
+- Create payment record (`PENDING`) with calculated amount and no appointmentId
+- Call `initiateMpesaForService` or `initiatePaystackForService` (service-specific gateway functions)
 - Return checkout details to client  
 **Response:** Payment record + gateway payload
 
@@ -105,30 +110,56 @@ import { parseWebhook, verifyTransaction } from "../services/external/paystackSe
 ```typescript
 export const initiatePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { appointmentId, amount, method, type, phone, email } = req.body;
-    const appointment = await Appointment.findById(appointmentId);
-    if (!appointment) return next(errorHandler(404, "Appointment not found"));
+    const { services, method, phone, email } = req.body;
+    if (!method) {
+      return next(errorHandler(400, "method is required"));
+    }
+
+    if (!Array.isArray(services) || services.length === 0) {
+      return next(errorHandler(400, "services array is required"));
+    }
+
+    const allowedMethods = ["MPESA", "CARD", "CASH"];
+    if (!allowedMethods.includes(method)) {
+      return next(errorHandler(400, "Invalid payment method"));
+    }
+
+    const serviceDocs = await Service.find({ _id: { $in: services }, isActive: true });
+    if (serviceDocs.length !== services.length) {
+      return next(errorHandler(404, "One or more services not found"));
+    }
+
+    const totalAmount = serviceDocs.reduce((sum, service) => sum + (service.fullPrice || 0), 0);
+    if (totalAmount <= 0) {
+      return next(errorHandler(400, "Invalid payment amount"));
+    }
+
+    if (method === "MPESA" && !phone) {
+      return next(errorHandler(400, "phone is required for MPESA payments"));
+    }
+    if (method === "CARD" && !email) {
+      return next(errorHandler(400, "email is required for CARD payments"));
+    }
 
     const payment = await createPaymentRecord({
-      appointment,
+      appointment: null,
       method,
-      amount,
+      amount: totalAmount,
+      type: "FULL_PAYMENT",
       customer: req.user
     });
 
     let gateway: any = null;
     if (method === "MPESA") {
-      gateway = await initiateMpesaForAppointment({
-        appointment,
+      gateway = await initiateMpesaForService({
         payment,
-        amount,
+        amount: totalAmount,
         phone
       });
     } else if (method === "CARD") {
-      gateway = await initiatePaystackForAppointment({
-        appointment,
+      gateway = await initiatePaystackForService({
         payment,
-        amount,
+        amount: totalAmount,
         email
       });
     }
@@ -140,6 +171,84 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while initiating payment"));
+  }
+};
+```
+
+#### `servicePayment()`
+**Purpose:** Pay the remaining amount for an appointment  
+**Access:** Customer/Admin  
+**Validation:**
+- Appointment exists
+- Appointment must have a remaining amount greater than 0
+- `phone` required for MPESA, `email` required for CARD
+**Process:**
+- Automatically uses `appointment.remainingAmount` as the payment amount (no amount field in request)
+- Create payment record (`PENDING`) with type `FULL_PAYMENT`
+- Call Daraja STK push or Paystack initialize
+- Return checkout details to client  
+**Response:** Payment record + gateway payload
+
+**Controller Implementation:**
+```typescript
+export const servicePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { appointmentId, method, phone, email } = req.body;
+    if (!appointmentId || !method) {
+      return next(errorHandler(400, "appointmentId and method are required"));
+    }
+
+    const allowedMethods = ["MPESA", "CARD", "CASH"];
+    if (!allowedMethods.includes(method)) {
+      return next(errorHandler(400, "Invalid payment method"));
+    }
+
+    const appointment = await Appointment.findById(appointmentId);
+    if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.remainingAmount <= 0) {
+      return next(errorHandler(400, "No remaining amount to pay"));
+    }
+
+    if (method === "MPESA" && !phone) {
+      return next(errorHandler(400, "phone is required for MPESA payments"));
+    }
+    if (method === "CARD" && !email) {
+      return next(errorHandler(400, "email is required for CARD payments"));
+    }
+
+    const payment = await createPaymentRecord({
+      appointment,
+      method,
+      amount: appointment.remainingAmount,
+      type: "FULL_PAYMENT",
+      customer: req.user
+    });
+
+    let gateway: any = null;
+    if (method === "MPESA") {
+      gateway = await initiateMpesaForAppointment({
+        appointment,
+        payment,
+        amount: appointment.remainingAmount,
+        phone
+      });
+    } else if (method === "CARD") {
+      gateway = await initiatePaystackForAppointment({
+        appointment,
+        payment,
+        amount: appointment.remainingAmount,
+        email
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Service payment initiated",
+      data: { payment, gateway }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while initiating service payment"));
   }
 };
 ```
@@ -305,11 +414,11 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 
 ### Functions Overview
 
-#### `createPaymentRecord(appointment, method, amount, type, customer?)`
+#### `createPaymentRecord(appointment?, method, amount, type, customer?)`
 **Purpose:** Create a payment record before gateway initiation  
 **Access:** Internal service  
-**Validation:** Appointment exists, amount > 0, method and type are valid  
-**Process:** Generate payment number, create `PENDING` payment linked to appointment  
+**Validation:** Amount > 0, method and type are valid  
+**Process:** Generate payment number, create `PENDING` payment (appointmentId is optional - can be null for service-only payments)  
 **Response:** Payment document
 
 **Service Implementation:**
@@ -319,7 +428,7 @@ export const createPaymentRecord = async (params: CreatePaymentRecordParams): Pr
 
   const payment = await Payment.create({
     paymentNumber,
-    appointmentId: params.appointment._id,
+    appointmentId: params.appointment?._id || null,
     amount: params.amount,
     method: params.method,
     type: params.type,
@@ -331,12 +440,12 @@ export const createPaymentRecord = async (params: CreatePaymentRecordParams): Pr
 };
 ```
 
-#### `applySuccessfulPayment(appointment, payment, io?)`
-**Purpose:** Mark payment as successful and update appointment status/amounts  
+#### `applySuccessfulPayment(appointment?, payment, io?)`
+**Purpose:** Mark payment as successful and update appointment status/amounts (if appointment exists)  
 **Access:** Internal service  
-**Validation:** Payment and appointment exist  
-**Process:** Update payment to `SUCCESS`, confirm appointment if needed, update remaining amount  
-**Response:** Updated payment and appointment
+**Validation:** Payment exists, appointment is optional  
+**Process:** Update payment to `SUCCESS`, if appointment exists: confirm appointment if needed, update remaining amount  
+**Response:** Updated payment and appointment (if provided)
 
 **Service Implementation:**
 ```typescript
@@ -346,22 +455,28 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
   payment.status = "SUCCESS";
   await payment.save();
 
-  if (payment.type === "FULL_PAYMENT") {
-    appointment.remainingAmount = 0;
-    if (appointment.status === "PENDING") {
+  if (appointment) {
+    if (payment.type === "FULL_PAYMENT") {
+      appointment.remainingAmount = 0;
+      if (appointment.status === "PENDING") {
+        appointment.status = "CONFIRMED";
+      }
+    }
+
+    if (payment.type === "BOOKING_FEE" && appointment.status === "PENDING") {
       appointment.status = "CONFIRMED";
     }
-  }
 
-  if (payment.type === "BOOKING_FEE" && appointment.status === "PENDING") {
-    appointment.status = "CONFIRMED";
-  }
+    await appointment.save();
 
-  await appointment.save();
-
-  if (io) {
-    io.emit("payment.updated", { paymentId: payment._id.toString(), status: payment.status });
-    io.emit("appointment.updated", { appointmentId: appointment._id.toString(), status: appointment.status });
+    if (io) {
+      io.emit("payment.updated", { paymentId: payment._id.toString(), status: payment.status });
+      io.emit("appointment.updated", { appointmentId: appointment._id.toString(), status: appointment.status });
+    }
+  } else {
+    if (io) {
+      io.emit("payment.updated", { paymentId: payment._id.toString(), status: payment.status });
+    }
   }
 
   return { payment, appointment };
@@ -393,6 +508,67 @@ export const initiateMpesaForAppointment = async (params: InitiateMpesaParams): 
     merchantRequestId: res.merchantRequestId,
     checkoutRequestId: res.checkoutRequestId
   };
+  await payment.save();
+
+  return res;
+};
+```
+
+#### `initiateMpesaForService(payment, amount, phone)`
+**Purpose:** Start M-Pesa STK push for service-only payment (no appointment)  
+**Access:** Internal service  
+**Validation:** Amount > 0, phone provided, M-Pesa credentials configured  
+**Process:** Initiate STK push using service reference format (`SRV-{paymentId}-{timestamp}`) and store Daraja refs on payment  
+**Response:** Daraja response with checkout identifiers
+
+**Service Implementation:**
+```typescript
+export const initiateMpesaForService = async (params: InitiateMpesaForServiceParams): Promise<any> => {
+  const { payment, amount, phone } = params;
+
+  const accountReference = `SRV-${payment._id}-${Date.now()}`;
+  const res = await initiateStkPush({
+    amount,
+    phone,
+    accountReference
+  });
+
+  payment.status = "PENDING";
+  if (!payment.processorRefs) payment.processorRefs = {};
+  payment.processorRefs.daraja = {
+    merchantRequestId: res.merchantRequestId,
+    checkoutRequestId: res.checkoutRequestId
+  };
+  await payment.save();
+
+  return res;
+};
+```
+
+#### `initiatePaystackForService(payment, amount, email, callbackUrl?)`
+**Purpose:** Start Paystack transaction for service-only payment (no appointment)  
+**Access:** Internal service  
+**Validation:** Amount > 0, email provided, Paystack secret configured  
+**Process:** Initialize Paystack transaction using service reference format (`SRV-{paymentId}-{timestamp}`) and store reference on payment  
+**Response:** Paystack authorization URL and reference
+
+**Service Implementation:**
+```typescript
+export const initiatePaystackForService = async (params: InitiatePaystackForServiceParams): Promise<any> => {
+  const { payment, amount, email, callbackUrl } = params;
+
+  const reference = `SRV-${payment._id}-${Date.now()}`;
+  const res = await initTransaction({
+    amount,
+    email,
+    reference,
+    callbackUrl: callbackUrl || undefined,
+    currency: process.env.PAYSTACK_CURRENCY || "KES"
+  });
+
+  payment.status = "PENDING";
+  if (!payment.processorRefs) payment.processorRefs = {};
+  payment.processorRefs.paystack = { reference };
   await payment.save();
 
   return res;
@@ -837,7 +1013,8 @@ export const verifyTransaction = async (params: VerifyTransactionParams): Promis
 ### Base Path: `/api/payments`
 
 ```typescript
-POST   /initiate                       // Initiate payment
+POST   /initiate                       // Initiate payment (services-based)
+POST   /service-payment                // Pay remaining amount
 POST   /webhooks/mpesa                 // Daraja callback
 POST   /webhooks/paystack              // Paystack callback
 GET    /                               // List payments
@@ -852,6 +1029,7 @@ GET    /:paymentId                     // Get payment
 import express from "express";
 import {
   initiatePayment,
+  servicePayment,
   mpesaWebhook,
   paystackWebhook,
   getPayments,
@@ -862,6 +1040,7 @@ import { authenticateToken, authorizeRoles } from "../middleware/auth";
 const router = express.Router();
 
 router.post("/initiate", authenticateToken, initiatePayment);
+router.post("/service-payment", authenticateToken, servicePayment);
 router.post("/webhooks/mpesa", mpesaWebhook);
 router.post("/webhooks/paystack", paystackWebhook);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getPayments);
@@ -877,13 +1056,12 @@ export default router;
 **Body (JSON):**
 ```json
 {
-  "appointmentId": "...",
-  "amount": 200,
+  "services": ["serviceId1", "serviceId2"],
   "method": "MPESA",
-  "type": "BOOKING_FEE",
   "phone": "+254712345679"
 }
 ```
+**Note:** This endpoint is for service-only payments (no appointment required). The `amount` is automatically calculated from the total of the selected services. The `services` array is required and must contain at least one service ID. Payment type is always `FULL_PAYMENT` for service payments.
 **Response:**
 ```json
 {
@@ -893,6 +1071,37 @@ export default router;
     "payment": {
       "id": "...",
       "status": "PENDING"
+    },
+    "gateway": {
+      "checkoutRequestId": "...",
+      "merchantRequestId": "..."
+    }
+  }
+}
+```
+
+#### `POST /api/payments/service-payment`
+**Headers:** `Authorization: Bearer <token>`  
+**Body (JSON):**
+```json
+{
+  "appointmentId": "...",
+  "method": "MPESA",
+  "phone": "+254712345679"
+}
+```
+**Note:** The payment amount is automatically set to the appointment's `remainingAmount`. No `amount` field is required or accepted. The `phone` is required for MPESA, `email` is required for CARD payments.
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service payment initiated",
+  "data": {
+    "payment": {
+      "id": "...",
+      "status": "PENDING",
+      "type": "FULL_PAYMENT",
+      "amount": 500
     },
     "gateway": {
       "checkoutRequestId": "...",
@@ -963,19 +1172,18 @@ router.post("/initiate", authenticateToken, initiatePayment);
 
 ## 📝 API Examples
 
-### Initiate Booking Fee (M-Pesa)
+### Initiate Service Payment (M-Pesa) - No Appointment Required
 ```bash
 curl -X POST http://localhost:4500/api/payments/initiate \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "appointmentId": "64f2...",
-    "amount": 200,
+    "services": ["64f3...", "64f4..."],
     "method": "MPESA",
-    "type": "BOOKING_FEE",
     "phone": "+254712345679"
   }'
 ```
+**Note:** This is for service-only payments (no appointment). The amount is automatically calculated from the total of the selected services. Payment type is always `FULL_PAYMENT`.
 **Response:**
 ```json
 {
@@ -988,18 +1196,41 @@ curl -X POST http://localhost:4500/api/payments/initiate \
 }
 ```
 
-### Initiate Booking Fee (Paystack)
+### Initiate Service Payment (Paystack) - No Appointment Required
 ```bash
 curl -X POST http://localhost:4500/api/payments/initiate \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "appointmentId": "64f2...",
-    "amount": 200,
+    "services": ["64f3...", "64f4..."],
     "method": "CARD",
-    "type": "BOOKING_FEE",
     "email": "customer@example.com"
   }'
+```
+**Note:** This is for service-only payments (no appointment). The amount is automatically calculated from the total of the selected services. Payment type is always `FULL_PAYMENT`.
+
+### Service Payment (Pay Remaining Amount) - M-Pesa
+```bash
+curl -X POST http://localhost:4500/api/payments/service-payment \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "appointmentId": "64f2...",
+    "method": "MPESA",
+    "phone": "+254712345679"
+  }'
+```
+**Note:** The payment amount is automatically set to the appointment's `remainingAmount`. No `amount` field is required.
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service payment initiated",
+  "data": {
+    "payment": { "id": "...", "status": "PENDING", "type": "FULL_PAYMENT" },
+    "gateway": { "checkoutRequestId": "...", "merchantRequestId": "..." }
+  }
+}
 ```
 **Response:**
 ```json

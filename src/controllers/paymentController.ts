@@ -1,12 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
 import Payment from "../models/Payment";
 import Appointment from "../models/Appointment";
+import Service from "../models/Service";
 import { errorHandler } from "../middleware/errorHandler";
 import {
   createPaymentRecord,
   applySuccessfulPayment,
   initiateMpesaForAppointment,
   initiatePaystackForAppointment,
+  initiateMpesaForService,
+  initiatePaystackForService,
   validatePaymentAmount
 } from "../services/internal/paymentService";
 import { parseCallback } from "../services/external/darajaService";
@@ -14,26 +17,87 @@ import { parseWebhook, verifyTransaction } from "../services/external/paystackSe
 
 export const initiatePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { appointmentId, amount, method, type, phone, email } = req.body;
-    if (!appointmentId || !method || !type) {
-      return next(errorHandler(400, "appointmentId, method, and type are required"));
+    const { services, method, phone, email } = req.body;
+    if (!method) {
+      return next(errorHandler(400, "method is required"));
+    }
+
+    if (!Array.isArray(services) || services.length === 0) {
+      return next(errorHandler(400, "services array is required"));
     }
 
     const allowedMethods = ["MPESA", "CARD", "CASH"];
-    const allowedTypes = ["BOOKING_FEE", "FULL_PAYMENT"];
     if (!allowedMethods.includes(method)) {
       return next(errorHandler(400, "Invalid payment method"));
     }
-    if (!allowedTypes.includes(type)) {
-      return next(errorHandler(400, "Invalid payment type"));
+
+    const serviceDocs = await Service.find({ _id: { $in: services }, isActive: true });
+    if (serviceDocs.length !== services.length) {
+      return next(errorHandler(404, "One or more services not found"));
+    }
+
+    const totalAmount = serviceDocs.reduce((sum, service) => sum + (service.fullPrice || 0), 0);
+    if (totalAmount <= 0) {
+      return next(errorHandler(400, "Invalid payment amount"));
+    }
+
+    if (method === "MPESA" && !phone) {
+      return next(errorHandler(400, "phone is required for MPESA payments"));
+    }
+    if (method === "CARD" && !email) {
+      return next(errorHandler(400, "email is required for CARD payments"));
+    }
+
+    const payment = await createPaymentRecord({
+      appointment: null,
+      method,
+      amount: totalAmount,
+      type: "FULL_PAYMENT",
+      customer: req.user
+    });
+
+    let gateway: any = null;
+    if (method === "MPESA") {
+      gateway = await initiateMpesaForService({
+        payment,
+        amount: totalAmount,
+        phone
+      });
+    } else if (method === "CARD") {
+      gateway = await initiatePaystackForService({
+        payment,
+        amount: totalAmount,
+        email
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Payment initiated",
+      data: { payment, gateway }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while initiating payment"));
+  }
+};
+
+export const servicePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { appointmentId, method, phone, email } = req.body;
+    if (!appointmentId || !method) {
+      return next(errorHandler(400, "appointmentId and method are required"));
+    }
+
+    const allowedMethods = ["MPESA", "CARD", "CASH"];
+    if (!allowedMethods.includes(method)) {
+      return next(errorHandler(400, "Invalid payment method"));
     }
 
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
 
-    const resolvedAmount = type === "BOOKING_FEE" && !amount ? appointment.bookingFeeAmount : amount;
-    if (!validatePaymentAmount(resolvedAmount, appointment, type)) {
-      return next(errorHandler(400, "Invalid payment amount"));
+    if (appointment.remainingAmount <= 0) {
+      return next(errorHandler(400, "No remaining amount to pay"));
     }
 
     if (method === "MPESA" && !phone) {
@@ -46,8 +110,8 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
     const payment = await createPaymentRecord({
       appointment,
       method,
-      amount: resolvedAmount,
-      type,
+      amount: appointment.remainingAmount,
+      type: "FULL_PAYMENT",
       customer: req.user
     });
 
@@ -56,25 +120,25 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
       gateway = await initiateMpesaForAppointment({
         appointment,
         payment,
-        amount: resolvedAmount,
+        amount: appointment.remainingAmount,
         phone
       });
     } else if (method === "CARD") {
       gateway = await initiatePaystackForAppointment({
         appointment,
         payment,
-        amount: resolvedAmount,
+        amount: appointment.remainingAmount,
         email
       });
     }
 
     res.status(200).json({
       success: true,
-      message: "Payment initiated",
+      message: "Service payment initiated",
       data: { payment, gateway }
     });
   } catch (error: any) {
-    next(errorHandler(500, "Server error while initiating payment"));
+    next(errorHandler(500, "Server error while initiating service payment"));
   }
 };
 
@@ -109,14 +173,19 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const appointment = await Appointment.findById(payment.appointmentId);
-    if (!appointment) {
-      res.status(200).json({ success: false });
-      return;
-    }
-
     payment.transactionRef = parsed.checkoutRequestId;
-    await applySuccessfulPayment({ appointment, payment, io });
+    
+    if (payment.appointmentId) {
+      const appointment = await Appointment.findById(payment.appointmentId);
+      if (!appointment) {
+        res.status(200).json({ success: false });
+        return;
+      }
+      await applySuccessfulPayment({ appointment, payment, io });
+    } else {
+      await applySuccessfulPayment({ appointment: null, payment, io });
+    }
+    
     res.status(200).json({ success: true });
   } catch (error: any) {
     next(errorHandler(500, "Server error while processing M-Pesa webhook"));
@@ -145,14 +214,19 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    const appointment = await Appointment.findById(payment.appointmentId);
-    if (!appointment) {
-      res.status(200).json({ success: false });
-      return;
-    }
-
     payment.transactionRef = parsed.reference;
-    await applySuccessfulPayment({ appointment, payment, io: req.app.get("io") });
+    
+    if (payment.appointmentId) {
+      const appointment = await Appointment.findById(payment.appointmentId);
+      if (!appointment) {
+        res.status(200).json({ success: false });
+        return;
+      }
+      await applySuccessfulPayment({ appointment, payment, io: req.app.get("io") });
+    } else {
+      await applySuccessfulPayment({ appointment: null, payment, io: req.app.get("io") });
+    }
+    
     res.status(200).json({ success: true });
   } catch (error: any) {
     next(errorHandler(500, "Server error while processing Paystack webhook"));

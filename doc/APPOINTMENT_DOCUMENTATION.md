@@ -334,7 +334,10 @@ export const confirmAppointment = async (req: Request, res: Response, next: Next
 #### `rescheduleAppointment()`
 **Purpose:** Move appointment to a new time  
 **Access:** Admin/Staff (or customer if allowed)  
-**Validation:** New slot must be available
+**Validation:**
+- Appointment must exist
+- Appointment status must be `CONFIRMED` (only confirmed appointments can be rescheduled)
+- New slot must be available (validated using `checkSlotAvailability` - checks working hours, existing appointments, and breaks)
 
 **Controller Implementation:**
 ```typescript
@@ -345,6 +348,25 @@ export const rescheduleAppointment = async (req: Request, res: Response, next: N
 
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be rescheduled"));
+    }
+
+    if (!startTime || !endTime) {
+      return next(errorHandler(400, "startTime and endTime are required"));
+    }
+
+    const slotCheck = await checkSlotAvailability({
+      staffId: appointment.staffId.toString(),
+      serviceIds: (appointment.services || []).map((id) => id.toString()),
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      excludeAppointmentId: appointment._id.toString()
+    });
+    if (!slotCheck.ok) {
+      return next(errorHandler(400, slotCheck.message || "Appointment time is not available"));
+    }
 
     appointment.startTime = startTime;
     appointment.endTime = endTime;
@@ -364,6 +386,10 @@ export const rescheduleAppointment = async (req: Request, res: Response, next: N
 #### `cancelAppointment()`
 **Purpose:** Cancel appointment  
 **Access:** Customer/Admin/Staff  
+**Validation:**
+- Appointment must exist
+- Appointment status must be `CONFIRMED` (only confirmed appointments can be cancelled)
+- Cancellation must be at least 2 hours before the appointment start time
 **Process:** Set status to `CANCELLED` and optionally trigger refunds or notifications
 
 **Controller Implementation:**
@@ -373,6 +399,16 @@ export const cancelAppointment = async (req: Request, res: Response, next: NextF
     const { appointmentId } = req.params;
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be cancelled"));
+    }
+
+    const now = new Date();
+    const hoursUntilStart = (appointment.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    if (hoursUntilStart < 2) {
+      return next(errorHandler(400, "Appointments can only be cancelled at least 2 hours before start time"));
+    }
 
     appointment.status = "CANCELLED";
     await appointment.save();
@@ -390,7 +426,11 @@ export const cancelAppointment = async (req: Request, res: Response, next: NextF
 
 #### `checkIn()`
 **Purpose:** Mark customer arrival  
-**Access:** Staff  
+**Access:** Staff/Admin  
+**Validation:**
+- Appointment must exist
+- Appointment status must be `CONFIRMED` (only confirmed appointments can be checked in)
+- Check-in is only allowed on the same day as the appointment start time
 **Process:** Set `checkedInAt`
 
 **Controller Implementation:**
@@ -400,6 +440,19 @@ export const checkIn = async (req: Request, res: Response, next: NextFunction): 
     const { appointmentId } = req.params;
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be checked in"));
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const appointmentDate = new Date(appointment.startTime);
+    appointmentDate.setHours(0, 0, 0, 0);
+    if (today.getTime() !== appointmentDate.getTime()) {
+      return next(errorHandler(400, "Check-in is only allowed on the day of the appointment"));
+    }
+    }
 
     appointment.checkedInAt = new Date();
     await appointment.save();
@@ -446,6 +499,9 @@ export const completeAppointment = async (req: Request, res: Response, next: Nex
 #### `markNoShow()`
 **Purpose:** Mark no-show  
 **Access:** Staff/Admin  
+**Validation:**
+- Appointment must exist
+- Appointment status must be `CONFIRMED` (only confirmed appointments can be marked as no-show)
 **Process:** Set status `NO_SHOW`
 
 **Controller Implementation:**
@@ -455,6 +511,10 @@ export const markNoShow = async (req: Request, res: Response, next: NextFunction
     const { appointmentId } = req.params;
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be marked as no-show"));
+    }
 
     appointment.status = "NO_SHOW";
     await appointment.save();
@@ -473,7 +533,8 @@ export const markNoShow = async (req: Request, res: Response, next: NextFunction
 #### `getAppointments()`
 **Purpose:** List appointments  
 **Access:** Admin/Staff  
-**Filters:** status, staffId, date range
+**Filters:** status, staffId, date range  
+**Sorting:** Results are sorted by `createdAt` in descending order (latest first)
 
 **Controller Implementation:**
 ```typescript
@@ -492,7 +553,8 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
     const appointments = await Appointment.find(query)
       .populate("customerId", "firstName lastName phone")
       .populate("staffId", "firstName lastName")
-      .populate("services", "name duration fullPrice");
+      .populate("services", "name duration fullPrice")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -507,7 +569,8 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
 #### `getMyAppointments()`
 **Purpose:** Customer's appointments  
 **Access:** Customer  
-**Filters:** status, date range
+**Filters:** status, date range  
+**Sorting:** Results are sorted by `createdAt` in descending order (latest first)
 
 **Controller Implementation:**
 ```typescript
@@ -524,7 +587,8 @@ export const getMyAppointments = async (req: Request, res: Response, next: NextF
 
     const appointments = await Appointment.find(query)
       .populate("staffId", "firstName lastName")
-      .populate("services", "name duration fullPrice");
+      .populate("services", "name duration fullPrice")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -584,6 +648,7 @@ PATCH  /:appointmentId/no-show    // No-show
 GET    /                          // List appointments (admin/staff)
 GET    /my                        // Customer appointments
 GET    /:appointmentId            // Get appointment by id
+DELETE /:appointmentId            // Delete appointment
 ```
 
 ### Router Implementation
@@ -617,6 +682,7 @@ router.patch("/:appointmentId/no-show", authenticateToken, authorizeRoles(["staf
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getAppointments);
 router.get("/my", authenticateToken, authorizeRoles(["customer"]), getMyAppointments);
 router.get("/:appointmentId", authenticateToken, getAppointmentById);
+router.delete("/:appointmentId", authenticateToken, authorizeRoles(["admin", "staff"]), deleteAppointment);
 
 export default router;
 ```
@@ -836,6 +902,23 @@ export default router;
 }
 ```
 
+#### `DELETE /api/appointments/:appointmentId`
+**Headers:** `Authorization: Bearer <token>`  
+**Access:** Admin/Staff  
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Appointment deleted successfully",
+  "data": {
+    "appointmentId": "..."
+  }
+}
+```
+**Notes:**
+- Permanently deletes the appointment from the database
+- Related payments remain in the database for audit purposes (orphaned records)
+
 ---
 
 ## 🔐 Middleware
@@ -908,6 +991,22 @@ curl -X PATCH http://localhost:4500/api/appointments/<appointmentId>/reschedule 
     "startTime": "2026-01-26T10:00:00.000Z",
     "endTime": "2026-01-26T11:30:00.000Z"
   }'
+```
+
+### Delete Appointment
+```bash
+curl -X DELETE http://localhost:4500/api/appointments/<appointmentId> \
+  -H "Authorization: Bearer <admin_or_staff_token>"
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Appointment deleted successfully",
+  "data": {
+    "appointmentId": "..."
+  }
+}
 ```
 
 ---

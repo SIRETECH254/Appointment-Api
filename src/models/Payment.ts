@@ -6,7 +6,7 @@ const paymentSchema = new Schema<IPayment>(
     appointmentId: {
       type: Schema.Types.ObjectId,
       ref: "Appointment",
-      required: [true, "Appointment is required"]
+      required: false
     },
     paymentNumber: {
       type: String,

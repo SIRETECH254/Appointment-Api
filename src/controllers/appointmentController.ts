@@ -209,8 +209,23 @@ export const rescheduleAppointment = async (req: Request, res: Response, next: N
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
 
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be rescheduled"));
+    }
+
     if (!startTime || !endTime) {
       return next(errorHandler(400, "startTime and endTime are required"));
+    }
+
+    const slotCheck = await checkSlotAvailability({
+      staffId: appointment.staffId.toString(),
+      serviceIds: (appointment.services || []).map((id) => id.toString()),
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      excludeAppointmentId: appointment._id.toString()
+    });
+    if (!slotCheck.ok) {
+      return next(errorHandler(400, slotCheck.message || "Appointment time is not available"));
     }
 
     appointment.startTime = startTime;
@@ -233,6 +248,16 @@ export const cancelAppointment = async (req: Request, res: Response, next: NextF
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
 
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be cancelled"));
+    }
+
+    const now = new Date();
+    const hoursUntilStart = (appointment.startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    if (hoursUntilStart < 2) {
+      return next(errorHandler(400, "Appointments can only be cancelled at least 2 hours before start time"));
+    }
+
     appointment.status = "CANCELLED";
     await appointment.save();
 
@@ -251,6 +276,18 @@ export const checkIn = async (req: Request, res: Response, next: NextFunction): 
     const { appointmentId } = req.params;
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
+
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be checked in"));
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const appointmentDate = new Date(appointment.startTime);
+    appointmentDate.setHours(0, 0, 0, 0);
+    if (today.getTime() !== appointmentDate.getTime()) {
+      return next(errorHandler(400, "Check-in is only allowed on the day of the appointment"));
+    }
 
     appointment.checkedInAt = new Date();
     await appointment.save();
@@ -291,6 +328,10 @@ export const markNoShow = async (req: Request, res: Response, next: NextFunction
     const appointment = await Appointment.findById(appointmentId);
     if (!appointment) return next(errorHandler(404, "Appointment not found"));
 
+    if (appointment.status !== "CONFIRMED") {
+      return next(errorHandler(400, "Only confirmed appointments can be marked as no-show"));
+    }
+
     appointment.status = "NO_SHOW";
     await appointment.save();
 
@@ -319,7 +360,8 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
     const appointments = await Appointment.find(query)
       .populate("customerId", "firstName lastName phone")
       .populate("staffId", "firstName lastName")
-      .populate("services", "name duration fullPrice");
+      .populate("services", "name duration fullPrice")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -343,7 +385,8 @@ export const getMyAppointments = async (req: Request, res: Response, next: NextF
 
     const appointments = await Appointment.find(query)
       .populate("staffId", "firstName lastName")
-      .populate("services", "name duration fullPrice");
+      .populate("services", "name duration fullPrice")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -372,5 +415,26 @@ export const getAppointmentById = async (req: Request, res: Response, next: Next
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching appointment"));
+  }
+};
+
+export const deleteAppointment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { appointmentId } = req.params;
+    const appointment = await Appointment.findById(appointmentId);
+
+    if (!appointment) {
+      return next(errorHandler(404, "Appointment not found"));
+    }
+
+    await Appointment.findByIdAndDelete(appointmentId);
+
+    res.status(200).json({
+      success: true,
+      message: "Appointment deleted successfully",
+      data: { appointmentId }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while deleting appointment"));
   }
 };

@@ -9,7 +9,8 @@ import {
   markNoShow,
   getAppointments,
   getMyAppointments,
-  getAppointmentById
+  getAppointmentById,
+  deleteAppointment
 } from "../controllers/appointmentController";
 import { authenticateToken, authorizeRoles } from "../middleware/auth";
 
@@ -25,5 +26,6 @@ router.patch("/:appointmentId/no-show", authenticateToken, authorizeRoles(["staf
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getAppointments);
 router.get("/my", authenticateToken, authorizeRoles(["customer"]), getMyAppointments);
 router.get("/:appointmentId", authenticateToken, getAppointmentById);
+router.delete("/:appointmentId", authenticateToken, authorizeRoles(["admin", "staff"]), deleteAppointment);
 
 export default router;
