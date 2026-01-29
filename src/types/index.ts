@@ -67,6 +67,19 @@ export interface IBreak extends Document {
   createdAt: Date;
 }
 
+export interface IContact extends Document {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+  userId?: Types.ObjectId | null;
+  status: "NEW" | "READ" | "REPLIED" | "ARCHIVED";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IStoreConfiguration extends Document {
   _id: Types.ObjectId;
   appointmentFeeType: "FIXED" | "PERCENTAGE";

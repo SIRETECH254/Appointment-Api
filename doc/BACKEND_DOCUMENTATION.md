@@ -226,7 +226,27 @@ interface IBreak {
 
 ---
 
-### 9. Notification Model
+### 9. Contact Model
+```typescript
+interface IContact {
+  _id: ObjectId;
+  name: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+  userId?: ObjectId | null;  // set when submitter is authenticated
+  status: "NEW" | "READ" | "REPLIED" | "ARCHIVED";
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Indexes: `{ status: 1 }`, `{ createdAt: -1 }`, `{ userId: 1 }` (sparse).
+
+---
+
+### 10. Notification Model
 ```typescript
 interface INotification {
   _id: ObjectId;
@@ -369,6 +389,16 @@ interface INotification {
 #### `storeConfigController.ts`
 - `getConfig()` - Get store configuration
 - `updateConfig()` - Update appointment fee, reminders, and policies
+
+---
+
+### 11. Contact Controllers
+
+#### `contactController.ts`
+- `submitContact()` - Submit contact message (public; optional auth attaches userId)
+- `getContacts()` - List contact submissions (admin)
+- `getContact()` - Get contact by ID (admin)
+- `updateContactStatus()` - Update contact status to READ/REPLIED/ARCHIVED (admin)
 
 ---
 
@@ -546,6 +576,7 @@ appointment-api/
 │   │   ├── Appointment.ts
 │   │   ├── Payment.ts
 │   │   ├── Break.ts
+│   │   ├── Contact.ts
 │   │   └── Notification.ts
 │   ├── controllers/
 │   │   ├── authController.ts
@@ -568,7 +599,8 @@ appointment-api/
 │   │   ├── appointmentRoutes.ts
 │   │   ├── paymentRoutes.ts
 │   │   ├── notificationRoutes.ts
-│   │   └── storeConfigRoutes.ts
+│   │   ├── storeConfigRoutes.ts
+│   │   └── contactRoutes.ts
 │   ├── middleware/
 │   │   ├── auth.ts                # JWT auth and role checks
 │   │   ├── errorHandler.ts        # Global error handling
