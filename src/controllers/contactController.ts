@@ -1,6 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
 import { errorHandler } from "../middleware/errorHandler";
 import Contact from "../models/Contact";
+import User from "../models/User";
+import { sendGenericEmail } from "../services/external/emailService";
 
 export const submitContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -141,5 +143,55 @@ export const updateContactStatus = async (req: Request, res: Response, next: Nex
   } catch (error: any) {
     console.error("Update contact status error:", error);
     next(errorHandler(500, "Server error while updating contact status"));
+  }
+};
+
+export const replyToContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+    const { message } = req.body;
+
+    const trimmedMessage = typeof message === "string" ? message.trim() : "";
+    if (!trimmedMessage) {
+      return next(errorHandler(400, "Reply message is required"));
+    }
+    if (trimmedMessage.length > 2000) {
+      return next(errorHandler(400, "Reply message must be at most 2000 characters"));
+    }
+
+    const contact = await Contact.findById(contactId);
+    if (!contact) {
+      return next(errorHandler(404, "Contact not found"));
+    }
+
+    let recipientEmail: string;
+    if (contact.userId) {
+      const user = await User.findById(contact.userId);
+      if (!user || !user.email) {
+        return next(errorHandler(400, "User not found or has no email; reply to contact email instead"));
+      }
+      recipientEmail = user.email;
+    } else {
+      recipientEmail = contact.email;
+    }
+
+    try {
+      await sendGenericEmail(recipientEmail, `Re: ${contact.subject}`, trimmedMessage);
+    } catch (emailError: any) {
+      console.error("Reply email error:", emailError);
+      return next(errorHandler(500, "Failed to send reply email"));
+    }
+
+    contact.status = "REPLIED";
+    await contact.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Reply sent successfully",
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Reply to contact error:", error);
+    next(errorHandler(500, "Server error while sending reply"));
   }
 };

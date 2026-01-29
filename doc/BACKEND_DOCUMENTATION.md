@@ -398,6 +398,7 @@ interface INotification {
 - `submitContact()` - Submit contact message (public; optional auth attaches userId)
 - `getContacts()` - List contact submissions (admin)
 - `getContact()` - Get contact by ID (admin)
+- `replyToContact()` - Send reply by email to customer (admin; uses user email if contact has userId, else contact email)
 - `updateContactStatus()` - Update contact status to READ/REPLIED/ARCHIVED (admin)
 
 ---
@@ -548,6 +549,19 @@ Base: `/api/config`
 ```typescript
 GET    /                          // Get configuration
 PUT    /                          // Update configuration
+```
+
+---
+
+### Contact Routes
+Base: `/api/contact`
+
+```typescript
+POST   /                    // Submit contact (public; optionalAuth to attach user)
+GET    /                    // List contacts (admin)
+GET    /:contactId          // Get contact by id (admin)
+POST   /:contactId/reply    // Send reply by email (admin)
+PATCH  /:contactId/status   // Update contact status (admin)
 ```
 
 ---

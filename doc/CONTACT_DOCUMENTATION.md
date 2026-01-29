@@ -120,6 +120,8 @@ status:  { default: "NEW", enum: NEW | READ | REPLIED | ARCHIVED }
 import type { Request, Response, NextFunction } from "express";
 import { errorHandler } from "../middleware/errorHandler";
 import Contact from "../models/Contact";
+import User from "../models/User";
+import { sendGenericEmail } from "../services/external/emailService";
 ```
 
 ### Functions Overview
@@ -131,31 +133,7 @@ import Contact from "../models/Contact";
 **Process:** If `req.user` exists (after optionalAuth), set `userId`. Create contact, return 201.  
 **Response:** Created contact
 
-#### `getContacts(query)`
-**Purpose:** List contact submissions  
-**Access:** Admin  
-**Validation:** Optional query filters only  
-**Process:** Filter by `status`, optional `search` (name/email/subject), sort by `createdAt`  
-**Response:** Contact list
-
-#### `getContact(contactId)`
-**Purpose:** Fetch a contact by id  
-**Access:** Admin  
-**Validation:** Contact must exist  
-**Process:** Find by id  
-**Response:** Contact record
-
-#### `updateContactStatus(contactId, { status })`
-**Purpose:** Update contact status (e.g. mark as READ, REPLIED, ARCHIVED)  
-**Access:** Admin  
-**Validation:** Contact must exist; `status` must be READ, REPLIED, or ARCHIVED  
-**Process:** Update and save  
-**Response:** Updated contact
-
-### Controller Implementation
-
-**File: `src/controllers/contactController.ts`**
-
+**Controller Implementation:**
 ```typescript
 export const submitContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -212,7 +190,17 @@ export const submitContact = async (req: Request, res: Response, next: NextFunct
     next(errorHandler(500, "Server error while submitting contact"));
   }
 };
+```
 
+#### `getContacts(query)`
+**Purpose:** List contact submissions  
+**Access:** Admin  
+**Validation:** Optional query filters only  
+**Process:** Filter by `status`, optional `search` (name/email/subject), sort by `createdAt`  
+**Response:** Contact list
+
+**Controller Implementation:**
+```typescript
 export const getContacts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { status, search, sort } = req.query;
@@ -250,7 +238,17 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
     next(errorHandler(500, "Server error while fetching contacts"));
   }
 };
+```
 
+#### `getContact(contactId)`
+**Purpose:** Fetch a contact by id  
+**Access:** Admin  
+**Validation:** Contact must exist  
+**Process:** Find by id  
+**Response:** Contact record
+
+**Controller Implementation:**
+```typescript
 export const getContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { contactId } = req.params;
@@ -269,14 +267,24 @@ export const getContact = async (req: Request, res: Response, next: NextFunction
     next(errorHandler(500, "Server error while fetching contact"));
   }
 };
+```
 
+#### `updateContactStatus(contactId, { status })`
+**Purpose:** Update contact status (e.g. mark as READ, REPLIED, ARCHIVED)  
+**Access:** Admin  
+**Validation:** Contact must exist; `status` must be READ, REPLIED, or ARCHIVED  
+**Process:** Update and save  
+**Response:** Updated contact
+
+**Controller Implementation:**
+```typescript
 export const updateContactStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { contactId } = req.params;
     const { status } = req.body;
 
-    const allowed = ["READ", "REPLIED", "ARCHIVED"];
-    if (!status || typeof status !== "string" || !allowed.includes(status)) {
+    const allowed: ("READ" | "REPLIED" | "ARCHIVED")[] = ["READ", "REPLIED", "ARCHIVED"];
+    if (!status || typeof status !== "string" || !allowed.includes(status as "READ" | "REPLIED" | "ARCHIVED")) {
       return next(errorHandler(400, "status must be one of: READ, REPLIED, ARCHIVED"));
     }
 
@@ -285,7 +293,7 @@ export const updateContactStatus = async (req: Request, res: Response, next: Nex
       return next(errorHandler(404, "Contact not found"));
     }
 
-    contact.status = status;
+    contact.status = status as "READ" | "REPLIED" | "ARCHIVED";
     await contact.save();
 
     res.status(200).json({
@@ -300,6 +308,66 @@ export const updateContactStatus = async (req: Request, res: Response, next: Nex
 };
 ```
 
+#### `replyToContact(contactId, { message })`
+**Purpose:** Admin sends a reply by email to the customer who submitted the contact.  
+**Access:** Admin  
+**Validation:** Contact must exist; `message` required, non-empty, max length 2000.  
+**Process:** If contact has `userId`, load User and use `user.email`; otherwise use `contact.email`. Send email via `sendGenericEmail(to, "Re: " + contact.subject, message)`. Set contact `status` to REPLIED, save.  
+**Response:** Success and updated contact
+
+**Controller Implementation:**
+```typescript
+export const replyToContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+    const { message } = req.body;
+
+    const trimmedMessage = typeof message === "string" ? message.trim() : "";
+    if (!trimmedMessage) {
+      return next(errorHandler(400, "Reply message is required"));
+    }
+    if (trimmedMessage.length > 2000) {
+      return next(errorHandler(400, "Reply message must be at most 2000 characters"));
+    }
+
+    const contact = await Contact.findById(contactId);
+    if (!contact) {
+      return next(errorHandler(404, "Contact not found"));
+    }
+
+    let recipientEmail: string;
+    if (contact.userId) {
+      const user = await User.findById(contact.userId);
+      if (!user || !user.email) {
+        return next(errorHandler(400, "User not found or has no email; reply to contact email instead"));
+      }
+      recipientEmail = user.email;
+    } else {
+      recipientEmail = contact.email;
+    }
+
+    try {
+      await sendGenericEmail(recipientEmail, `Re: ${contact.subject}`, trimmedMessage);
+    } catch (emailError: any) {
+      console.error("Reply email error:", emailError);
+      return next(errorHandler(500, "Failed to send reply email"));
+    }
+
+    contact.status = "REPLIED";
+    await contact.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Reply sent successfully",
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Reply to contact error:", error);
+    next(errorHandler(500, "Server error while sending reply"));
+  }
+};
+```
+
 ---
 
 ## Contact Routes
@@ -310,7 +378,8 @@ export const updateContactStatus = async (req: Request, res: Response, next: Nex
 POST   /                    // Submit contact (public; optionalAuth to attach user)
 GET    /                    // List contacts (admin)
 GET    /:contactId          // Get contact by id (admin)
-PATCH  /:contactId/status    // Update contact status (admin)
+POST   /:contactId/reply    // Send reply by email (admin)
+PATCH  /:contactId/status   // Update contact status (admin)
 ```
 
 ### Router Implementation
@@ -323,7 +392,8 @@ import {
   submitContact,
   getContacts,
   getContact,
-  updateContactStatus
+  updateContactStatus,
+  replyToContact
 } from "../controllers/contactController";
 import { authenticateToken, requireAdmin, optionalAuth } from "../middleware/auth";
 
@@ -332,6 +402,7 @@ const router = express.Router();
 router.post("/", optionalAuth, submitContact);
 router.get("/", authenticateToken, requireAdmin, getContacts);
 router.get("/:contactId", authenticateToken, requireAdmin, getContact);
+router.post("/:contactId/reply", authenticateToken, requireAdmin, replyToContact);
 router.patch("/:contactId/status", authenticateToken, requireAdmin, updateContactStatus);
 
 export default router;
@@ -394,6 +465,26 @@ export default router;
 }
 ```
 
+#### `POST /api/contact/:contactId/reply`
+**Headers:** `Authorization: Bearer <admin_token>`  
+**Body:**
+```json
+{
+  "message": "Thank you for reaching out. We will get back to you shortly."
+}
+```
+If the contact has `userId`, the reply is sent to that user's email; otherwise to the contact's submitted email. Contact status is set to REPLIED.
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Reply sent successfully",
+  "data": {
+    "contact": {}
+  }
+}
+```
+
 #### `PATCH /api/contact/:contactId/status`
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body:**
@@ -433,9 +524,10 @@ router.get("/", authenticateToken, requireAdmin, getContacts);
 
 ### requireAdmin
 **Purpose:** Restrict access to admin role.  
-**Usage:** List, get one, and update status.
+**Usage:** List, get one, reply, and update status.
 ```typescript
 router.get("/:contactId", authenticateToken, requireAdmin, getContact);
+router.post("/:contactId/reply", authenticateToken, requireAdmin, replyToContact);
 router.patch("/:contactId/status", authenticateToken, requireAdmin, updateContactStatus);
 ```
 
@@ -480,6 +572,14 @@ curl -X GET http://localhost:4500/api/contact/<contactId> \
   -H "Authorization: Bearer <admin_token>"
 ```
 
+### Reply to Contact (admin)
+```bash
+curl -X POST http://localhost:4500/api/contact/<contactId>/reply \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_token>" \
+  -d '{"message": "Thank you for your message. We will respond soon."}'
+```
+
 ### Update Contact Status (admin)
 ```bash
 curl -X PATCH http://localhost:4500/api/contact/<contactId>/status \
@@ -494,7 +594,7 @@ curl -X PATCH http://localhost:4500/api/contact/<contactId>/status \
 
 - **Public submit:** No auth required; anyone can submit. Consider rate limiting on `POST /api/contact` (e.g. same as auth endpoints).
 - **Optional auth:** If token is sent, `userId` is attached for admin reference.
-- **Admin-only read/update:** List, get one, and update status require `authenticateToken` and `requireAdmin`.
+- **Admin-only read/update/reply:** List, get one, reply, and update status require `authenticateToken` and `requireAdmin`.
 - **Validation:** Required fields and max lengths enforced; basic email format check.
 
 ---
@@ -514,6 +614,15 @@ Common responses:
 ```
 ```json
 { "success": false, "message": "status must be one of: READ, REPLIED, ARCHIVED" }
+```
+```json
+{ "success": false, "message": "Reply message is required" }
+```
+```json
+{ "success": false, "message": "Reply message must be at most 2000 characters" }
+```
+```json
+{ "success": false, "message": "Failed to send reply email" }
 ```
 ```json
 { "success": false, "message": "Admin access required" }
