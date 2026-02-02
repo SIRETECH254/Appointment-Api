@@ -29,7 +29,9 @@ const allowedOrigins: string[] = [
   "http://localhost:8083",
   "http://localhost:8084",
   "http://localhost:8085",
-  "http://localhost:4500"
+  "http://localhost:4500",
+  "https://appointment-api-zlfq.onrender.com",
+  "https://appointment-admin-t5yy.onrender.com"
 ];
 
 // Add CALLBACK_URL if it exists
