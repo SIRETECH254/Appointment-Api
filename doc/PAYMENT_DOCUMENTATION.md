@@ -406,6 +406,70 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 };
 ```
 
+#### `checkPaymentStatus(checkoutRequestId)`
+**Purpose:** Check M-Pesa STK push payment status using checkoutRequestId  
+**Access:** Authenticated users  
+**Validation:**
+- `checkoutRequestId` is required (from params or query)
+- Payment must exist with the given checkoutRequestId
+**Process:**
+- Find payment by checkoutRequestId in processorRefs
+- Query Daraja API for current STK push status
+- Return payment details along with status query result
+**Response:** Payment details and Daraja status response
+
+**Controller Implementation:**
+```typescript
+export const checkPaymentStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    // Get checkoutRequestId from params or query
+    const checkoutRequestId = req.params.checkoutRequestId || req.query.checkoutRequestId;
+    
+    if (!checkoutRequestId || typeof checkoutRequestId !== "string") {
+      return next(errorHandler(400, "checkoutRequestId is required"));
+    }
+
+    // Find payment by checkoutRequestId
+    const payment = await Payment.findOne({ 
+      "processorRefs.daraja.checkoutRequestId": checkoutRequestId 
+    });
+    
+    if (!payment) {
+      return next(errorHandler(404, "Payment not found for this checkoutRequestId"));
+    }
+
+    // Query Daraja API for STK push status
+    const statusResult = await queryStkPushStatus({ checkoutRequestId });
+
+    // Return payment details along with status query result
+    res.status(200).json({
+      success: true,
+      data: {
+        payment: {
+          id: payment._id,
+          paymentNumber: payment.paymentNumber,
+          amount: payment.amount,
+          status: payment.status,
+          method: payment.method,
+          type: payment.type,
+          createdAt: payment.createdAt
+        },
+        status: {
+          ok: statusResult.ok,
+          resultCode: statusResult.resultCode,
+          resultDesc: statusResult.resultDesc,
+          error: statusResult.error,
+          details: statusResult.details
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error("Check payment status error:", error);
+    next(errorHandler(500, "Server error while checking payment status"));
+  }
+};
+```
+
 ---
 
 ## 🧩 Internal Payment Service
@@ -1018,6 +1082,7 @@ POST   /service-payment                // Pay remaining amount
 POST   /webhooks/mpesa                 // Daraja callback
 POST   /webhooks/paystack              // Paystack callback
 GET    /                               // List payments
+GET    /status/:checkoutRequestId      // Check M-Pesa payment status
 GET    /:paymentId                     // Get payment
 ```
 
@@ -1033,7 +1098,8 @@ import {
   mpesaWebhook,
   paystackWebhook,
   getPayments,
-  getPayment
+  getPayment,
+  checkPaymentStatus
 } from "../controllers/paymentController";
 import { authenticateToken, authorizeRoles } from "../middleware/auth";
 
@@ -1044,6 +1110,7 @@ router.post("/service-payment", authenticateToken, servicePayment);
 router.post("/webhooks/mpesa", mpesaWebhook);
 router.post("/webhooks/paystack", paystackWebhook);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getPayments);
+router.get("/status/:checkoutRequestId", authenticateToken, checkPaymentStatus);
 router.get("/:paymentId", authenticateToken, getPayment);
 
 export default router;
@@ -1139,6 +1206,35 @@ export default router;
   }
 }
 ```
+
+#### `GET /api/payments/status/:checkoutRequestId`
+**Headers:** `Authorization: Bearer <token>`  
+**Purpose:** Check M-Pesa STK push payment status by querying Daraja API  
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payment": {
+      "id": "...",
+      "paymentNumber": "PAY-2026-0001",
+      "amount": 500,
+      "status": "PENDING",
+      "method": "MPESA",
+      "type": "FULL_PAYMENT",
+      "createdAt": "2026-01-15T10:00:00.000Z"
+    },
+    "status": {
+      "ok": true,
+      "resultCode": 0,
+      "resultDesc": "The service request is processed successfully.",
+      "error": null,
+      "details": null
+    }
+  }
+}
+```
+**Note:** This endpoint queries the Daraja API to get the current status of an STK push transaction. The `resultCode` 0 indicates success, while other codes indicate various failure states.
 
 #### `GET /api/payments/:paymentId`
 **Headers:** `Authorization: Bearer <token>`
@@ -1258,6 +1354,37 @@ curl -X GET "http://localhost:4500/api/payments?status=SUCCESS" \
   }
 }
 ```
+
+### Check Payment Status (M-Pesa)
+```bash
+curl -X GET http://localhost:4500/api/payments/status/<checkoutRequestId> \
+  -H "Authorization: Bearer <token>"
+```
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payment": {
+      "id": "...",
+      "paymentNumber": "PAY-2026-0001",
+      "amount": 500,
+      "status": "PENDING",
+      "method": "MPESA",
+      "type": "FULL_PAYMENT",
+      "createdAt": "2026-01-15T10:00:00.000Z"
+    },
+    "status": {
+      "ok": true,
+      "resultCode": 0,
+      "resultDesc": "The service request is processed successfully.",
+      "error": null,
+      "details": null
+    }
+  }
+}
+```
+**Note:** This endpoint queries the Daraja API to get the real-time status of an M-Pesa STK push transaction. Use this to check payment status when webhooks are delayed or to poll for status updates.
 
 ### Get Payment
 ```bash

@@ -5,7 +5,8 @@ import {
   mpesaWebhook,
   paystackWebhook,
   getPayments,
-  getPayment
+  getPayment,
+  checkPaymentStatus
 } from "../controllers/paymentController";
 import { authenticateToken, authorizeRoles } from "../middleware/auth";
 
@@ -16,6 +17,7 @@ router.post("/service-payment", authenticateToken, servicePayment);
 router.post("/webhooks/mpesa", mpesaWebhook);
 router.post("/webhooks/paystack", paystackWebhook);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getPayments);
+router.get("/status/:checkoutRequestId", authenticateToken, checkPaymentStatus);
 router.get("/:paymentId", authenticateToken, getPayment);
 
 export default router;

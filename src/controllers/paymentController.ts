@@ -12,7 +12,7 @@ import {
   initiatePaystackForService,
   validatePaymentAmount
 } from "../services/internal/paymentService";
-import { parseCallback } from "../services/external/darajaService";
+import { parseCallback, queryStkPushStatus } from "../services/external/darajaService";
 import { parseWebhook, verifyTransaction } from "../services/external/paystackService";
 
 export const initiatePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -270,5 +270,62 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
     res.status(200).json({ success: true, data: { payment } });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching payment"));
+  }
+};
+
+/**
+ * Check M-Pesa STK push payment status using checkoutRequestId
+ * Queries Daraja API to get the current status of an STK push transaction
+ * 
+ * @param req - Express request object with checkoutRequestId in params or query
+ * @param res - Express response object
+ * @param next - Express next function
+ */
+export const checkPaymentStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    // Get checkoutRequestId from params or query
+    const checkoutRequestId = req.params.checkoutRequestId || req.query.checkoutRequestId;
+    
+    if (!checkoutRequestId || typeof checkoutRequestId !== "string") {
+      return next(errorHandler(400, "checkoutRequestId is required"));
+    }
+
+    // Find payment by checkoutRequestId
+    const payment = await Payment.findOne({ 
+      "processorRefs.daraja.checkoutRequestId": checkoutRequestId 
+    });
+    
+    if (!payment) {
+      return next(errorHandler(404, "Payment not found for this checkoutRequestId"));
+    }
+
+    // Query Daraja API for STK push status
+    const statusResult = await queryStkPushStatus({ checkoutRequestId });
+
+    // Return payment details along with status query result
+    res.status(200).json({
+      success: true,
+      data: {
+        payment: {
+          id: payment._id,
+          paymentNumber: payment.paymentNumber,
+          amount: payment.amount,
+          status: payment.status,
+          method: payment.method,
+          type: payment.type,
+          createdAt: payment.createdAt
+        },
+        status: {
+          ok: statusResult.ok,
+          resultCode: statusResult.resultCode,
+          resultDesc: statusResult.resultDesc,
+          error: statusResult.error,
+          details: statusResult.details
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error("Check payment status error:", error);
+    next(errorHandler(500, "Server error while checking payment status"));
   }
 };
