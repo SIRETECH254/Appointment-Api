@@ -128,35 +128,80 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
 #### `getBreaks()`
 **Purpose:** List breaks (optional filters)  
 **Access:** Admin  
-**Query:** `staffId`, `date`, `from`, `to`  
-**Response:** Break list
+**Query:** `staffId`, `date`, `from`, `to`, `page`, `limit`  
+**Pagination:** `page`, `limit` (default: page=1, limit=10)  
+**Response:** Break list with populated staff information and pagination
 
 **Controller Implementation:**
 ```typescript
 export const getBreaks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { staffId, date, from, to } = req.query;
+    const { staffId, date, from, to, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
-    if (staffId) query.staffId = staffId;
-
-    if (date) {
-      const dayStart = new Date(`${date}T00:00:00`);
-      const dayEnd = new Date(`${date}T23:59:59.999`);
-      query.startTime = { $lt: dayEnd };
-      query.endTime = { $gt: dayStart };
-    } else if (from || to) {
-      if (from) query.endTime = { $gt: new Date(String(from)) };
-      if (to) query.startTime = { $lt: new Date(String(to)) };
+    if (staffId) {
+      const staffIdStr = String(staffId);
+      if (!isValidObjectId(staffIdStr)) {
+        return next(errorHandler(400, "Invalid staffId"));
+      }
+      query.staffId = staffIdStr;
     }
 
-    const breaks = await BreakModel.find(query).sort({ startTime: 1 });
+    if (date) {
+      const dateOnly = parseDateOnly(String(date));
+      if (!dateOnly) {
+        return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
+      }
+      const { start, end } = buildDayRange(dateOnly);
+      query.startTime = { $lt: end };
+      query.endTime = { $gt: start };
+    } else if (from || to) {
+      const fromDate = from ? parseDate(String(from)) : null;
+      const toDate = to ? parseDate(String(to)) : null;
+      if ((from && !fromDate) || (to && !toDate)) {
+        return next(errorHandler(400, "Invalid from or to date"));
+      }
+      if (fromDate && toDate) {
+        query.startTime = { $lt: toDate };
+        query.endTime = { $gt: fromDate };
+      } else if (fromDate) {
+        query.endTime = { $gt: fromDate };
+      } else if (toDate) {
+        query.startTime = { $lt: toDate };
+      }
+    }
+
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query breaks with pagination and populate staff
+    const breaks = await BreakModel.find(query)
+      .populate("staffId", "firstName lastName email phone")
+      .sort({ startTime: 1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await BreakModel.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { breaks }
+      data: {
+        breaks,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalBreaks: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
+    console.error("Get breaks error:", error);
     next(errorHandler(500, "Server error while fetching breaks"));
   }
 };
@@ -308,16 +353,38 @@ export default router;
 
 #### `GET /api/breaks`
 **Headers:** `Authorization: Bearer <admin_token>`  
-**Query (optional):** `staffId`, `date`, `from`, `to`  
+**Query (optional):** `staffId`, `date`, `from`, `to`, `page`, `limit`  
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "breaks": []
+    "breaks": [
+      {
+        "id": "...",
+        "staffId": {
+          "id": "...",
+          "firstName": "John",
+          "lastName": "Staff",
+          "email": "john@example.com",
+          "phone": "+254712345679"
+        },
+        "startTime": "2026-01-25T12:00:00.000Z",
+        "endTime": "2026-01-25T13:00:00.000Z",
+        "reason": "Lunch break"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalBreaks": 0,
+      "hasNextPage": false,
+      "hasPrevPage": false
+    }
   }
 }
 ```
+**Note:** The `staffId` field is populated with full staff details (firstName, lastName, email, phone).
 
 #### `GET /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  

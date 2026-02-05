@@ -235,7 +235,7 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
 
 export const getPayments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, method, startDate, endDate } = req.query;
+    const { status, method, startDate, endDate, page = 1, limit = 10 } = req.query;
     const query: any = {};
     if (status) query.status = status;
     if (method) query.method = method;
@@ -245,8 +245,34 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
       if (endDate) query.createdAt.$lte = new Date(String(endDate));
     }
 
-    const payments = await Payment.find(query).sort({ createdAt: "desc" });
-    res.status(200).json({ success: true, data: { payments } });
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query payments with pagination
+    const payments = await Payment.find(query)
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Payment.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        payments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalPayments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching payments"));
   }

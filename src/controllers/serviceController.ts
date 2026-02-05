@@ -75,7 +75,7 @@ export const createService = async (req: Request, res: Response, next: NextFunct
 // List services with optional filters
 export const getServices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { search, status, sort } = req.query;
+    const { search, status, sort, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (status === "active") query.isActive = true;
@@ -97,11 +97,33 @@ export const getServices = async (req: Request, res: Response, next: NextFunctio
       }
     }
 
-    const services = await Service.find(query).sort(sortOptions);
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query services with pagination
+    const services = await Service.find(query)
+      .sort(sortOptions)
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Service.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { services }
+      data: {
+        services,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalServices: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get services error:", error);

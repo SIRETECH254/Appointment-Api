@@ -347,7 +347,7 @@ export const markNoShow = async (req: Request, res: Response, next: NextFunction
 
 export const getAppointments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, staffId, startDate, endDate } = req.query;
+    const { status, staffId, startDate, endDate, page = 1, limit = 10 } = req.query;
     const query: any = {};
     if (status) query.status = status;
     if (staffId) query.staffId = staffId;
@@ -357,15 +357,36 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
       if (endDate) query.startTime.$lte = new Date(String(endDate));
     }
 
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query appointments with pagination
     const appointments = await Appointment.find(query)
       .populate("customerId", "firstName lastName phone")
-      .populate("staffId", "firstName lastName")
+      .populate("staffId", "firstName lastName email phone")
       .populate("services", "name duration fullPrice")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Appointment.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { appointments }
+      data: {
+        appointments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalAppointments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching appointments"));
@@ -374,7 +395,7 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
 
 export const getMyAppointments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, startDate, endDate } = req.query;
+    const { status, startDate, endDate, page = 1, limit = 10 } = req.query;
     const query: any = { customerId: req.user?._id };
     if (status) query.status = status;
     if (startDate || endDate) {
@@ -383,14 +404,35 @@ export const getMyAppointments = async (req: Request, res: Response, next: NextF
       if (endDate) query.startTime.$lte = new Date(String(endDate));
     }
 
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query appointments with pagination
     const appointments = await Appointment.find(query)
-      .populate("staffId", "firstName lastName")
+      .populate("staffId", "firstName lastName email phone")
       .populate("services", "name duration fullPrice")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Appointment.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { appointments }
+      data: {
+        appointments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalAppointments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching appointments"));

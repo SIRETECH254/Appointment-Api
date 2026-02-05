@@ -197,13 +197,14 @@ export const submitContact = async (req: Request, res: Response, next: NextFunct
 **Access:** Admin  
 **Validation:** Optional query filters only  
 **Process:** Filter by `status`, optional `search` (name/email/subject), sort by `createdAt`  
-**Response:** Contact list
+**Pagination:** `page`, `limit` (default: page=1, limit=10)  
+**Response:** Contact list with pagination
 
 **Controller Implementation:**
 ```typescript
 export const getContacts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, search, sort } = req.query;
+    const { status, search, sort, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (status === "NEW" || status === "READ" || status === "REPLIED" || status === "ARCHIVED") {
@@ -227,11 +228,33 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
       }
     }
 
-    const contacts = await Contact.find(query).sort(sortOptions).limit(100);
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query contacts with pagination
+    const contacts = await Contact.find(query)
+      .sort(sortOptions)
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Contact.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { contacts }
+      data: {
+        contacts,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalContacts: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get contacts error:", error);
@@ -442,13 +465,20 @@ export default router;
 
 #### `GET /api/contact`
 **Headers:** `Authorization: Bearer <admin_token>`  
-**Query (optional):** `status=NEW|READ|REPLIED|ARCHIVED`, `search=<term>`, `sort=createdAt:asc|desc`  
+**Query (optional):** `status=NEW|READ|REPLIED|ARCHIVED`, `search=<term>`, `sort=createdAt:asc|desc`, `page`, `limit`  
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "contacts": []
+    "contacts": [],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalContacts": 0,
+      "hasNextPage": false,
+      "hasPrevPage": false
+    }
   }
 }
 ```

@@ -62,7 +62,7 @@ export const submitContact = async (req: Request, res: Response, next: NextFunct
 
 export const getContacts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, search, sort } = req.query;
+    const { status, search, sort, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (status === "NEW" || status === "READ" || status === "REPLIED" || status === "ARCHIVED") {
@@ -86,11 +86,33 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
       }
     }
 
-    const contacts = await Contact.find(query).sort(sortOptions).limit(100);
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query contacts with pagination
+    const contacts = await Contact.find(query)
+      .sort(sortOptions)
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Contact.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { contacts }
+      data: {
+        contacts,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalContacts: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get contacts error:", error);

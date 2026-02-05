@@ -133,16 +133,17 @@ import User from "../models/User";
 **Purpose:** List roles with optional filters  
 **Access:** Admin  
 **Validation:** Optional `isActive` and `search` filters  
+**Pagination:** `page`, `limit` (default: page=1, limit=10)  
 **Process:**
 - Build query filters for status/search
-- Return sorted roles list
-**Response:** Array of roles
+- Return sorted roles list with pagination
+**Response:** Array of roles with pagination metadata
 
 **Controller Implementation:**
 ```typescript
 export const getAllRoles = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { isActive, search } = req.query;
+    const { isActive, search, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     // Optional filters
@@ -159,11 +160,33 @@ export const getAllRoles = async (req: Request, res: Response, next: NextFunctio
       ];
     }
 
-    const roles = await Role.find(query).sort({ name: 1 });
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query roles with pagination
+    const roles = await Role.find(query)
+      .sort({ name: 1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Role.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { roles }
+      data: {
+        roles,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalRoles: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get all roles error:", error);
@@ -553,13 +576,20 @@ export default router;
 
 #### `GET /api/roles`
 **Headers:** `Authorization: Bearer <admin_token>`
-**Query:** `isActive`, `search`
+**Query:** `isActive`, `search`, `page`, `limit`
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "roles": []
+    "roles": [],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalRoles": 0,
+      "hasNextPage": false,
+      "hasPrevPage": false
+    }
   }
 }
 ```

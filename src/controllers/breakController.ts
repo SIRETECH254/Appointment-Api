@@ -77,7 +77,7 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
 
 export const getBreaks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { staffId, date, from, to } = req.query;
+    const { staffId, date, from, to, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (staffId) {
@@ -112,11 +112,34 @@ export const getBreaks = async (req: Request, res: Response, next: NextFunction)
       }
     }
 
-    const breaks = await BreakModel.find(query).sort({ startTime: 1 });
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query breaks with pagination and populate staff
+    const breaks = await BreakModel.find(query)
+      .populate("staffId", "firstName lastName email phone")
+      .sort({ startTime: 1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await BreakModel.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { breaks }
+      data: {
+        breaks,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalBreaks: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get breaks error:", error);
