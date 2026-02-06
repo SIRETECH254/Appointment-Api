@@ -18,6 +18,7 @@ import breakRoutes from "./routes/breakRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import contactRoutes from "./routes/contactRoutes";
+import dashboardRoutes from "./routes/dashboardRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -128,6 +129,8 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.use("/api/contact", contactRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app
