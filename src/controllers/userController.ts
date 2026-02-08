@@ -12,7 +12,7 @@ export const getUserProfile = async (req: Request, res: Response, next: NextFunc
     // Load user with populated roles and services
     const user = await User.findById(req.user?._id)
       .select("-password -otpCode -resetPasswordToken")
-      .populate("roles", "name displayName description permissions")
+      .populate("roles", "name displayName description permissions isActive")
       .populate("services", "name duration fullPrice sortOrder isActive");
 
     if (!user) {

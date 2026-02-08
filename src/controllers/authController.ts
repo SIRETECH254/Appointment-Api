@@ -430,9 +430,11 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 // Get current authenticated user profile
 export const getMe = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // Load current user profile
+    // Load current user profile with populated roles
     const userId = req.user?._id;
-    const user = await User.findById(userId).select("-password -otpCode -resetPasswordToken");
+    const user = await User.findById(userId)
+      .select("-password -otpCode -resetPasswordToken")
+      .populate("roles", "name displayName description permissions");
 
     if (!user) {
       return next(errorHandler(404, "User not found"));
