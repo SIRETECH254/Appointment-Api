@@ -250,6 +250,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
     const users = await User.find(query)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName")
+      .populate("services", "name duration fullPrice sortOrder isActive")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
