@@ -65,6 +65,13 @@ app.use(
 
 app.options("*", cors());
 
+// Raw body parsing for specific debug endpoint (temporary)
+app.post("/api/payments/webhooks/mpesa-raw", express.raw({ type: "*/*" }), (req, res) => {
+  console.log("Mpesa Raw Webhook Payload (Buffer):", req.body);
+  console.log("Mpesa Raw Webhook Payload (Text):", req.body?.toString());
+  res.status(200).send("Received raw webhook data for debugging.");
+});
+
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
