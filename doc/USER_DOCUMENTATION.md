@@ -1318,6 +1318,8 @@ export default router;
   }
 }
 ```
+**Notes:**
+- `services` is populated for staff users who have assigned services.
 
 #### `GET /api/users/customers`
 **Headers:** `Authorization: Bearer <admin_token>`
