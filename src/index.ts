@@ -11,19 +11,34 @@ import authRoutes from "./routes/authRoutes";
 import roleRoutes from "./routes/roleRoutes";
 import userRoutes from "./routes/userRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
+import storeConfigurationRoutes from "./routes/storeConfigurationRoutes";
+import serviceRoutes from "./routes/serviceRoutes";
+import availabilityRoutes from "./routes/availabilityRoutes";
+import breakRoutes from "./routes/breakRoutes";
+import appointmentRoutes from "./routes/appointmentRoutes";
+import paymentRoutes from "./routes/paymentRoutes";
+import contactRoutes from "./routes/contactRoutes";
+import dashboardRoutes from "./routes/dashboardRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
 
 // CORS Configuration with explicit origins
-const allowedOrigins = [
+const allowedOrigins: string[] = [
   "http://localhost:8081",
   "http://localhost:8082",
   "http://localhost:8083",
   "http://localhost:8084",
-  "http://localhost:8085",
-  "http://localhost:4500"
+  "http://localhost:5173",
+  "http://localhost:4500",
+  "https://appointment-api-zlfq.onrender.com",
+  "https://appointment-admin-t5yy.onrender.com"
 ];
+
+// Add CALLBACK_URL if it exists
+if (process.env.CALLBACK_URL) {
+  allowedOrigins.push(process.env.CALLBACK_URL);
+}
 
 // CORS middleware configuration
 app.use(
@@ -101,6 +116,21 @@ app.use("/api/users", userRoutes);
 
 app.use("/api/notifications", notificationRoutes);
 
+app.use("/api/store-configuration", storeConfigurationRoutes);
+
+app.use("/api/services", serviceRoutes);
+
+app.use("/api/availability", availabilityRoutes);
+
+app.use("/api/breaks", breakRoutes);
+
+app.use("/api/appointments", appointmentRoutes);
+
+app.use("/api/payments", paymentRoutes);
+
+app.use("/api/contact", contactRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app
@@ -140,6 +170,7 @@ io.on("connection", (socket) => {
 });
 
 app.set("io", io);
+
 app.set("socketConnections", socketConnections);
 
 // Main API endpoint

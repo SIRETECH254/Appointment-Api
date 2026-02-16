@@ -12,6 +12,93 @@ export interface IRole extends Document {
   updatedAt: Date;
 }
 
+export interface IService extends Document {
+  _id: Types.ObjectId;
+  name: string;
+  description?: string | null;
+  duration: number;
+  fullPrice: number;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IAppointment extends Document {
+  _id: Types.ObjectId;
+  customerId: Types.ObjectId;
+  staffId: Types.ObjectId;
+  services: Types.ObjectId[];
+  startTime: Date;
+  endTime: Date;
+  status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+  bookingFeeAmount: number;
+  remainingAmount: number;
+  checkedInAt?: Date;
+  actualEndTime?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IPayment extends Document {
+  _id: Types.ObjectId;
+  appointmentId?: Types.ObjectId;
+  paymentNumber: string;
+  amount: number;
+  currency: "KES";
+  type: "BOOKING_FEE" | "FULL_PAYMENT";
+  method: "MPESA" | "CARD" | "CASH";
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  transactionRef?: string;
+  processorRefs?: {
+    daraja?: { merchantRequestId?: string; checkoutRequestId?: string };
+    paystack?: { reference?: string };
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IBreak extends Document {
+  _id: Types.ObjectId;
+  staffId: Types.ObjectId;
+  startTime: Date;
+  endTime: Date;
+  reason?: string;
+  createdAt: Date;
+}
+
+export interface IContact extends Document {
+  _id: Types.ObjectId;
+  name: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+  userId?: Types.ObjectId | null;
+  status: "NEW" | "READ" | "REPLIED" | "ARCHIVED";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IStoreConfiguration extends Document {
+  _id: Types.ObjectId;
+  appointmentFeeType: "FIXED" | "PERCENTAGE";
+  appointmentFeeValue: number;
+  currency: "KES";
+  minBookingNotice: number;
+  lateGracePeriod: number;
+  allowWalkIns: boolean;
+  notificationSettings: {
+    sendSMS: boolean;
+    sendEmail: boolean;
+    sendPush: boolean;
+    reminderTimes: number[];
+  };
+  businessHoursTimezone: "Africa/Nairobi";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IUser extends Document {
   _id: Types.ObjectId;
   firstName: string;

@@ -6,7 +6,7 @@ import User from "../models/User";
 // List roles with optional filters
 export const getAllRoles = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { isActive, search } = req.query;
+    const { isActive, search, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     // Optional filters
@@ -23,11 +23,33 @@ export const getAllRoles = async (req: Request, res: Response, next: NextFunctio
       ];
     }
 
-    const roles = await Role.find(query).sort({ name: 1 });
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query roles with pagination
+    const roles = await Role.find(query)
+      .sort({ name: 1 })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Role.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: { roles }
+      data: {
+        roles,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalRoles: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
     });
   } catch (error: any) {
     console.error("Get all roles error:", error);

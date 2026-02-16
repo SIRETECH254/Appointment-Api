@@ -23,40 +23,37 @@
 
 ## Required Packages
 
-### Core Dependencies
+### Core Dependencies (from package.json)
 ```json
 {
-  "axios": "^1.12.2",
+  "africastalking": "^0.7.7",
+  "axios": "^1.13.3",
   "bcryptjs": "^3.0.2",
+  "cloudinary": "^1.41.3",
   "cors": "^2.8.5",
   "dotenv": "^17.2.3",
   "express": "^4.21.2",
-  "joi": "^18.0.1",
   "jsonwebtoken": "^9.0.2",
   "mongoose": "^8.18.3",
-  "node-cron": "^3.0.3",
+  "multer": "^2.0.2",
+  "multer-storage-cloudinary": "^4.0.0",
   "nodemailer": "^7.0.6",
   "socket.io": "^4.8.1",
   "swagger-jsdoc": "^6.2.8",
   "swagger-ui-express": "^5.0.1",
-  "africastalking": "^0.7.7"
+  "validator": "^13.15.0"
 }
 ```
 
 ### Dev Dependencies
 ```json
 {
-  "@types/cors": "^2.8.19",
-  "@types/express": "^5.0.3",
-  "@types/jsonwebtoken": "^9.0.10",
-  "@types/node": "^24.5.2",
-  "@types/swagger-jsdoc": "^6.0.4",
-  "@types/swagger-ui-express": "^4.1.8",
-  "nodemon": "^3.1.10",
   "ts-node": "^10.9.2",
-  "typescript": "^5.9.2"
+  "typescript": "^5.9.2",
+  "nodemon": "^3.1.10"
 }
 ```
+(Type definitions such as @types/express, @types/node, etc. are listed in dependencies in the current package.json.)
 
 ---
 
@@ -77,7 +74,8 @@ interface IUser {
   country?: string;
   isActive: boolean;
   emailVerified: boolean;
-  avatar?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   otpCode?: string;
   otpExpiry?: Date;
   resetPasswordToken?: string;
@@ -127,11 +125,10 @@ interface IRole {
 interface IService {
   _id: ObjectId;
   name: string;
-  description?: string;
+  description?: string | null;
   duration: number; // minutes
   fullPrice: number;
-  bufferBefore: number; // minutes
-  bufferAfter: number; // minutes
+  sortOrder: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -170,7 +167,7 @@ interface IAppointment {
   _id: ObjectId;
   customerId: ObjectId;
   staffId: ObjectId;
-  serviceId: ObjectId;
+  services: ObjectId[];
   startTime: Date;
   endTime: Date;
   status: "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -194,14 +191,20 @@ db.appointments.createIndex({ staffId: 1, startTime: 1, endTime: 1 })
 ```typescript
 interface IPayment {
   _id: ObjectId;
-  appointmentId: ObjectId;
+  appointmentId?: ObjectId;
+  paymentNumber: string;
   amount: number;
   currency: "KES";
   type: "BOOKING_FEE" | "FULL_PAYMENT";
   method: "MPESA" | "CARD" | "CASH";
   status: "PENDING" | "SUCCESS" | "FAILED";
   transactionRef?: string;
+  processorRefs?: {
+    daraja?: { merchantRequestId?: string; checkoutRequestId?: string };
+    paystack?: { reference?: string };
+  };
   createdAt: Date;
+  updatedAt: Date;
 }
 ```
 
@@ -221,7 +224,27 @@ interface IBreak {
 
 ---
 
-### 9. Notification Model
+### 9. Contact Model
+```typescript
+interface IContact {
+  _id: ObjectId;
+  name: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+  userId?: ObjectId | null;  // set when submitter is authenticated
+  status: "NEW" | "READ" | "REPLIED" | "ARCHIVED";
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Indexes: `{ status: 1 }`, `{ createdAt: -1 }`, `{ userId: 1 }` (sparse).
+
+---
+
+### 10. Notification Model
 ```typescript
 interface INotification {
   _id: ObjectId;
@@ -309,11 +332,13 @@ interface INotification {
 - `getServices()` - List services
 - `getService()` - Get service by ID
 - `updateService()` - Update service
+- `deleteService()` - Delete service
 - `toggleServiceStatus()` - Activate/deactivate service
+- `assignServicesToStaff()` - Assign multiple services to a staff user
 
 ---
 
-### 6. Availability Controllers
+### 5. Availability Controllers
 
 #### `availabilityController.ts`
 - `getAvailableSlots()` - Calculate available slots for staff + service + date
@@ -333,14 +358,17 @@ interface INotification {
 - `markNoShow()` - Mark no-show
 - `getAppointments()` - List appointments (admin or staff)
 - `getMyAppointments()` - Customer's appointments
+- `getAppointmentById()` - Get single appointment by ID
+- `deleteAppointment()` - Delete appointment (admin/staff)
 
 ---
 
-### 8. Payment Controllers
+### 7. Payment Controllers
 
 #### `paymentController.ts`
 - `initiatePayment()` - Start booking fee or full payment
-- `paymentWebhook()` - Payment provider callback handler
+- `mpesaWebhook()` - M-Pesa (Daraja) callback handler
+- `paystackWebhook()` - Paystack callback handler
 - `getPayments()` - List payments
 - `getPayment()` - Get single payment
 
@@ -349,18 +377,46 @@ interface INotification {
 ### 9. Notification Controllers
 
 #### `notificationController.ts`
-- `scheduleReminders()` - Schedule appointment reminders
-- `sendNotification()` - Send notification instantly
-- `getNotifications()` - List user notifications
-- `updateNotificationStatus()` - Mark as sent/failed
+- `sendNotification()` - Send notification (admin/staff)
+- `getUserNotifications()` - List current user's notifications
+- `getNotification()` - Get single notification by ID
+- `markAsRead()` - Mark notification as read
+- `markAllAsRead()` - Mark all as read
+- `deleteNotification()` - Delete notification
+- `getUnreadCount()` - Get unread count
+- `getUnreadNotifications()` - Get unread notifications
+- `getNotificationsByCategory()` - List by category
+- `sendBulkNotification()` - Send bulk notification (admin)
 
 ---
 
-### 10. Store Configuration Controllers
+### 9. Store Configuration Controllers
 
-#### `storeConfigController.ts`
-- `getConfig()` - Get store configuration
-- `updateConfig()` - Update appointment fee, reminders, and policies
+#### `storeConfigurationController.ts`
+- `getStoreConfiguration()` - Get store configuration (public read)
+- `updateStoreConfiguration()` - Update configuration (admin)
+
+---
+
+### 10. Break Controllers
+
+#### `breakController.ts`
+- `createBreak()` - Create break for staff (admin)
+- `getBreaks()` - List breaks (admin)
+- `getBreak()` - Get break by ID (admin)
+- `updateBreak()` - Update break (admin)
+- `deleteBreak()` - Delete break (admin)
+
+---
+
+### 11. Contact Controllers
+
+#### `contactController.ts`
+- `submitContact()` - Submit contact message (public; optional auth attaches userId)
+- `getContacts()` - List contact submissions (admin)
+- `getContact()` - Get contact by ID (admin)
+- `replyToContact()` - Send reply by email to customer (admin; uses user email if contact has userId, else contact email)
+- `updateContactStatus()` - Update contact status to READ/REPLIED/ARCHIVED (admin)
 
 ---
 
@@ -446,6 +502,8 @@ GET    /                          // List services
 GET    /:serviceId                // Get service
 PUT    /:serviceId                // Update service
 PATCH  /:serviceId/toggle-status  // Activate/deactivate
+DELETE /:serviceId               // Delete service
+POST   /assign/:userId            // Assign services to staff (admin)
 ```
 
 ---
@@ -456,6 +514,19 @@ Base: `/api/availability`
 ```typescript
 GET    /slots                     // Available slots for staff+service+date
 GET    /day                        // Availability summary for a date
+```
+
+---
+
+### Break Routes
+Base: `/api/breaks`
+
+```typescript
+GET    /                          // List breaks (admin)
+GET    /:breakId                  // Get break by ID (admin)
+POST   /                          // Create break (admin)
+PUT    /:breakId                  // Update break (admin)
+DELETE /:breakId                  // Delete break (admin)
 ```
 
 ---
@@ -482,8 +553,10 @@ Base: `/api/payments`
 
 ```typescript
 POST   /initiate                  // Initiate payment
-POST   /webhook                   // Payment webhook
-GET    /                          // List payments
+POST   /service-payment           // Service payment
+POST   /webhooks/mpesa            // M-Pesa webhook
+POST   /webhooks/paystack         // Paystack webhook
+GET    /                          // List payments (admin/staff)
 GET    /:paymentId                // Get payment
 ```
 
@@ -493,10 +566,16 @@ GET    /:paymentId                // Get payment
 Base: `/api/notifications`
 
 ```typescript
-POST   /send                      // Send notification
-POST   /schedule                  // Schedule reminders
-GET    /                          // List notifications
-PATCH  /:notificationId/status    // Update status
+POST   /                          // Send notification (admin/staff)
+GET    /                          // List current user's notifications
+GET    /unread-count              // Get unread count
+GET    /unread                    // Get unread notifications
+GET    /category/:category        // List by category
+GET    /:notificationId           // Get notification by ID
+PATCH  /:notificationId/read      // Mark as read
+PATCH  /read-all                  // Mark all as read
+DELETE /:notificationId           // Delete notification
+POST   /bulk                      // Send bulk notification (admin)
 ```
 
 ---
@@ -511,10 +590,24 @@ PUT    /                          // Update configuration
 
 ---
 
+### Contact Routes
+Base: `/api/contact`
+
+```typescript
+POST   /                    // Submit contact (public; optionalAuth to attach user)
+GET    /                    // List contacts (admin)
+GET    /:contactId          // Get contact by id (admin)
+POST   /:contactId/reply    // Send reply by email (admin)
+PATCH  /:contactId/status   // Update contact status (admin)
+```
+
+---
+
 ### Utility Routes
 ```typescript
 GET    /api                        // API root info
 GET    /api/health                 // Health check
+GET    /api/debug/cors             // CORS debug (allowed origins, request origin)
 GET    /api/docs                   // Swagger UI
 ```
 
@@ -525,55 +618,66 @@ GET    /api/docs                   // Swagger UI
 appointment-api/
 ├── src/
 │   ├── config/
-│   │   ├── swagger.ts             # Swagger documentation config
+│   │   ├── cloudinary.ts          # Cloudinary upload config
+│   │   └── swagger.ts             # Swagger documentation config
 │   ├── models/
 │   │   ├── Role.ts
 │   │   ├── User.ts
-│   │   ├── Staff.ts
 │   │   ├── Service.ts
 │   │   ├── StoreConfiguration.ts
 │   │   ├── Appointment.ts
 │   │   ├── Payment.ts
 │   │   ├── Break.ts
+│   │   ├── Contact.ts
 │   │   └── Notification.ts
 │   ├── controllers/
 │   │   ├── authController.ts
 │   │   ├── roleController.ts
 │   │   ├── userController.ts
-│   │   ├── staffController.ts
 │   │   ├── serviceController.ts
 │   │   ├── availabilityController.ts
 │   │   ├── appointmentController.ts
 │   │   ├── paymentController.ts
 │   │   ├── notificationController.ts
-│   │   └── storeConfigController.ts
+│   │   ├── storeConfigurationController.ts
+│   │   ├── breakController.ts
+│   │   └── contactController.ts
 │   ├── routes/
 │   │   ├── authRoutes.ts
 │   │   ├── roleRoutes.ts
 │   │   ├── userRoutes.ts
-│   │   ├── staffRoutes.ts
 │   │   ├── serviceRoutes.ts
 │   │   ├── availabilityRoutes.ts
 │   │   ├── appointmentRoutes.ts
 │   │   ├── paymentRoutes.ts
 │   │   ├── notificationRoutes.ts
-│   │   └── storeConfigRoutes.ts
+│   │   ├── storeConfigurationRoutes.ts
+│   │   ├── breakRoutes.ts
+│   │   └── contactRoutes.ts
 │   ├── middleware/
-│   │   ├── auth.ts                # JWT auth and role checks
-│   │   ├── errorHandler.ts        # Global error handling
-│   │   ├── validate.ts            # Request validation
-│   │   └── rateLimit.ts           # Rate limiting
+│   │   ├── auth.ts                # JWT auth, optionalAuth, requireAdmin, authorizeRoles
+│   │   └── errorHandler.ts        # Global error handling
 │   ├── services/
-│   │   ├── availabilityService.ts # Slot calculation engine
-│   │   ├── paymentService.ts      # Payment gateway integrations
-│   │   └── notificationService.ts # Reminders and notifications
-│   ├── jobs/
-│   │   └── reminderScheduler.ts   # Cron-based reminder jobs
+│   │   ├── external/
+│   │   │   ├── darajaService.ts   # M-Pesa/Daraja integration
+│   │   │   ├── emailService.ts    # Nodemailer email sending
+│   │   │   ├── paystackService.ts # Paystack integration
+│   │   │   └── smsService.ts      # Africa's Talking SMS
+│   │   └── internal/
+│   │       ├── notificationService.ts
+│   │       └── paymentService.ts
+│   ├── jobs/                      # Scheduled/cron jobs (to be added)
+│   │   └── reminderScheduler.ts  # Appointment reminders (planned)
 │   ├── scripts/
-│   │   └── seedRoles.ts           # Seed default roles
+│   │   ├── seedRoles.ts           # Seed default roles
+│   │   └── seedStoreConfiguration.ts  # Seed store config
+│   ├── types/
+│   │   ├── africastalking.d.ts
+│   │   └── index.ts               # Shared interfaces (IUser, IContact, etc.)
 │   ├── utils/
-│   │   ├── time.ts                # Timezone and time helpers
-│   │   └── authHelpers.ts         # JWT + OTP helpers
+│   │   ├── authHelpers.ts         # JWT + OTP helpers
+│   │   ├── availability.ts       # Slot calculation helpers
+│   │   └── notificationHelper.ts
 │   └── index.ts                   # App entry point
 ├── doc/                           # Documentation
 ├── .env                           # Environment variables
@@ -582,20 +686,26 @@ appointment-api/
 └── tsconfig.json
 ```
 
+#### Jobs (planned)
+
+The **jobs/** folder is reserved for scheduled and background jobs. It is not yet implemented and will be added later. Planned content:
+
+- **reminderScheduler.ts** – Cron-based job to schedule and send appointment reminders (e.g. email/SMS) at configured times before appointments, using store configuration reminder times and the notification service.
+
 ---
 
 ### Middleware
 
-#### Authentication Middleware
+#### Authentication Middleware (auth.ts)
 - `authenticateToken` - Verify JWT and load user
+- `optionalAuth` - Attach user if token present; do not require auth
+- `requireAdmin` - Require admin role
 - `authorizeRoles(allowedRoles)` - Role-based access control
+- `requireOwnershipOrAdmin(resourceUserIdField)` - Owner or admin
+- `requireEmailVerification` - Require verified email
 
-#### Validation & Error Handling
-- `validateRequest` - Joi-based payload validation
-- `errorHandler` - Centralized error formatter
-
-#### Rate Limiting
-- Apply rate limits to auth and payment endpoints
+#### Error Handling
+- `errorHandler(statusCode, message)` - Centralized error formatter (errorHandler.ts)
 
 ---
 
@@ -763,4 +873,13 @@ npm start
 Last Updated: January 2026
 Version: 1.0.0
 
-Note: This documentation describes the intended backend design and architecture, not necessarily the current implementation.
+Note: This documentation reflects the current codebase (models, controllers, routes, folder structure, and middleware as implemented).
+
+- 500 - Internal Server Error
+
+---
+
+Last Updated: January 2026
+Version: 1.0.0
+
+Note: This documentation reflects the current codebase (models, controllers, routes, folder structure, and middleware as implemented).

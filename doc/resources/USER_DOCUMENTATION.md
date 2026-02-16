@@ -155,17 +155,18 @@ import { deleteFromCloudinary, uploadToCloudinary } from "../config/cloudinary";
 **Purpose:** Get current user profile  
 **Access:** Authenticated users  
 **Validation:** User must exist  
-**Process:** Fetch profile and populate roles  
+**Process:** Fetch profile and populate roles + services  
 **Response:** User profile data
 
 **Controller Implementation:**
 ```typescript
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // Load user with populated roles
+    // Load user with populated roles and services
     const user = await User.findById(req.user?._id)
       .select("-password -otpCode -resetPasswordToken")
-      .populate("roles", "name displayName description permissions");
+      .populate("roles", "name displayName description permissions")
+      .populate("services", "name duration fullPrice sortOrder isActive");
 
     if (!user) {
       return next(errorHandler(404, "User not found"));
@@ -260,6 +261,12 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
     }
 
     await user.save();
+
+    const roleIds = (user.roles || []).map((role: any) =>
+      role?._id ? role._id.toString() : role.toString()
+    );
+    const staffRole = await Role.findOne({ name: "staff" }).select("_id");
+    const isStaff = staffRole ? roleIds.includes(staffRole._id.toString()) : false;
 
     res.status(200).json({
       success: true,
@@ -482,7 +489,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
 **Purpose:** Fetch user by id  
 **Access:** Admin/Staff  
 **Validation:** User must exist  
-**Process:** Fetch user and populate roles  
+**Process:** Fetch user and populate roles + services  
 **Response:** User details
 
 **Controller Implementation:**
@@ -490,10 +497,11 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
 export const getUserById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    // Load target user with role details
+    // Load target user with role and service details
     const user = await User.findById(userId)
       .select("-password -otpCode -resetPasswordToken")
-      .populate("roles", "name displayName description permissions");
+      .populate("roles", "name displayName description permissions")
+      .populate("services", "name duration fullPrice sortOrder isActive");
 
     if (!user) {
       return next(errorHandler(404, "User not found"));
@@ -515,6 +523,7 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 **Validation:**
 - User must exist
 - Email format and uniqueness (if provided)
+ - `workingHours` must be an object if provided
 **Process:** Update profile fields and save  
 **Response:** Updated user
 
@@ -523,7 +532,7 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    const { firstName, lastName, phone, email, avatar } = req.body;
+    const { firstName, lastName, phone, email, avatar, workingHours } = req.body;
     const user = await User.findById(userId);
 
     if (!user) {
@@ -551,6 +560,13 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       }
 
       user.email = email.toLowerCase();
+    }
+
+    if (workingHours !== undefined) {
+      if (typeof workingHours !== "object" || Array.isArray(workingHours)) {
+        return next(errorHandler(400, "workingHours must be an object"));
+      }
+      user.workingHours = workingHours;
     }
 
     // Handle avatar upload via multipart/form-data
@@ -605,7 +621,11 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
           phone: user.phone,
           avatar: user.avatar,
           roles: user.roles,
-          isActive: user.isActive
+          isActive: user.isActive,
+          ...(isStaff && {
+            workingHours: user.workingHours,
+            services: user.services
+          })
         }
       }
     });
@@ -1158,11 +1178,23 @@ export default router;
   "data": {
     "user": {
       "id": "...",
-      "email": "john@company.com"
+      "email": "john@company.com",
+      "services": [
+        {
+          "_id": "...",
+          "name": "Haircut",
+          "duration": 30,
+          "fullPrice": 500,
+          "sortOrder": 1,
+          "isActive": true
+        }
+      ]
     }
   }
 }
 ```
+**Notes:**
+- `services` is populated for staff users who have assigned services.
 
 #### `PUT /api/users/profile`
 **Headers:** `Authorization: Bearer <token>`
@@ -1286,6 +1318,8 @@ export default router;
   }
 }
 ```
+**Notes:**
+- `services` is populated for staff users who have assigned services.
 
 #### `GET /api/users/customers`
 **Headers:** `Authorization: Bearer <admin_token>`
@@ -1314,11 +1348,23 @@ export default router;
   "data": {
     "user": {
       "id": "...",
-      "email": "john@company.com"
+      "email": "john@company.com",
+      "services": [
+        {
+          "_id": "...",
+          "name": "Haircut",
+          "duration": 30,
+          "fullPrice": 500,
+          "sortOrder": 1,
+          "isActive": true
+        }
+      ]
     }
   }
 }
 ```
+**Notes:**
+- `services` is populated for staff users who have assigned services.
 
 #### `PUT /api/users/:userId`
 **Headers:** `Authorization: Bearer <admin_token>`
@@ -1329,12 +1375,21 @@ export default router;
   "lastName": "Smith",
   "phone": "+254712345679",
   "email": "john.smith@company.com",
-  "avatar": "https://example.com/avatar.jpg"
+  "avatar": "https://example.com/avatar.jpg",
+  "workingHours": {
+    "monday": [{ "start": "09:00", "end": "17:00" }],
+    "tuesday": [{ "start": "09:00", "end": "17:00" }],
+    "wednesday": [{ "start": "09:00", "end": "17:00" }],
+    "thursday": [{ "start": "09:00", "end": "17:00" }],
+    "friday": [{ "start": "09:00", "end": "17:00" }],
+    "saturday": [],
+    "sunday": []
+  }
 }
 ```
 **Body (multipart/form-data):**
 - Field `avatar` (file) for image upload
-- Optional text fields: `firstName`, `lastName`, `phone`, `email`
+- Optional text fields: `firstName`, `lastName`, `phone`, `email`, `workingHours` (JSON string)
 **Notes:**
 - To remove the avatar, send `avatar: null` or an empty string in JSON.
 - If a new file is uploaded, the previous Cloudinary asset is deleted.
@@ -1351,6 +1406,8 @@ export default router;
   }
 }
 ```
+**Notes:**
+- `workingHours` and `services` are returned only when the user has the `staff` role.
 
 #### `PUT /api/users/:userId/status`
 **Headers:** `Authorization: Bearer <admin_token>`

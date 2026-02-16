@@ -1,0 +1,219 @@
+import type { Request, Response, NextFunction } from "express";
+import { errorHandler } from "../middleware/errorHandler";
+import Contact from "../models/Contact";
+import User from "../models/User";
+import { sendGenericEmail } from "../services/external/emailService";
+
+export const submitContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, email, phone, subject, message } = req.body;
+
+    const trimmedName = typeof name === "string" ? name.trim() : "";
+    const trimmedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const trimmedSubject = typeof subject === "string" ? subject.trim() : "";
+    const trimmedMessage = typeof message === "string" ? message.trim() : "";
+
+    if (!trimmedName || !trimmedEmail || !trimmedSubject || !trimmedMessage) {
+      return next(errorHandler(400, "name, email, subject and message are required"));
+    }
+
+    if (trimmedEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      return next(errorHandler(400, "Valid email is required"));
+    }
+
+    if (trimmedName.length > 120) {
+      return next(errorHandler(400, "Name must be at most 120 characters"));
+    }
+    if (trimmedSubject.length > 200) {
+      return next(errorHandler(400, "Subject must be at most 200 characters"));
+    }
+    if (trimmedMessage.length > 2000) {
+      return next(errorHandler(400, "Message must be at most 2000 characters"));
+    }
+
+    const userId = req.user?._id ?? null;
+    const trimmedPhone = typeof phone === "string" ? phone.trim() || null : null;
+    if (trimmedPhone && trimmedPhone.length > 30) {
+      return next(errorHandler(400, "Phone must be at most 30 characters"));
+    }
+
+    const contact = new Contact({
+      name: trimmedName,
+      email: trimmedEmail,
+      phone: trimmedPhone || undefined,
+      subject: trimmedSubject,
+      message: trimmedMessage,
+      userId: userId || undefined,
+      status: "NEW"
+    });
+
+    await contact.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Contact submitted successfully",
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Submit contact error:", error);
+    next(errorHandler(500, "Server error while submitting contact"));
+  }
+};
+
+export const getContacts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { status, search, sort, page = 1, limit = 10 } = req.query;
+    const query: any = {};
+
+    if (status === "NEW" || status === "READ" || status === "REPLIED" || status === "ARCHIVED") {
+      query.status = status;
+    }
+
+    if (search && typeof search === "string" && search.trim().length > 0) {
+      const term = search.trim();
+      query.$or = [
+        { name: { $regex: term, $options: "i" } },
+        { email: { $regex: term, $options: "i" } },
+        { subject: { $regex: term, $options: "i" } }
+      ];
+    }
+
+    let sortOptions: Record<string, 1 | -1> = { createdAt: -1 };
+    if (typeof sort === "string" && sort.length > 0) {
+      const [field, order] = sort.split(":");
+      if (field === "createdAt" && (order === "asc" || order === "desc")) {
+        sortOptions = { createdAt: order === "asc" ? 1 : -1 };
+      }
+    }
+
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query contacts with pagination
+    const contacts = await Contact.find(query)
+      .sort(sortOptions)
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await Contact.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        contacts,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalContacts: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error("Get contacts error:", error);
+    next(errorHandler(500, "Server error while fetching contacts"));
+  }
+};
+
+export const getContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+    const contact = await Contact.findById(contactId);
+
+    if (!contact) {
+      return next(errorHandler(404, "Contact not found"));
+    }
+
+    res.status(200).json({
+      success: true,
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Get contact error:", error);
+    next(errorHandler(500, "Server error while fetching contact"));
+  }
+};
+
+export const updateContactStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+    const { status } = req.body;
+
+    const allowed: ("READ" | "REPLIED" | "ARCHIVED")[] = ["READ", "REPLIED", "ARCHIVED"];
+    if (!status || typeof status !== "string" || !allowed.includes(status as "READ" | "REPLIED" | "ARCHIVED")) {
+      return next(errorHandler(400, "status must be one of: READ, REPLIED, ARCHIVED"));
+    }
+
+    const contact = await Contact.findById(contactId);
+    if (!contact) {
+      return next(errorHandler(404, "Contact not found"));
+    }
+
+    contact.status = status as "READ" | "REPLIED" | "ARCHIVED";
+    await contact.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Contact status updated successfully",
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Update contact status error:", error);
+    next(errorHandler(500, "Server error while updating contact status"));
+  }
+};
+
+export const replyToContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contactId } = req.params;
+    const { message } = req.body;
+
+    const trimmedMessage = typeof message === "string" ? message.trim() : "";
+    if (!trimmedMessage) {
+      return next(errorHandler(400, "Reply message is required"));
+    }
+    if (trimmedMessage.length > 2000) {
+      return next(errorHandler(400, "Reply message must be at most 2000 characters"));
+    }
+
+    const contact = await Contact.findById(contactId);
+    if (!contact) {
+      return next(errorHandler(404, "Contact not found"));
+    }
+
+    let recipientEmail: string;
+    if (contact.userId) {
+      const user = await User.findById(contact.userId);
+      if (!user || !user.email) {
+        return next(errorHandler(400, "User not found or has no email; reply to contact email instead"));
+      }
+      recipientEmail = user.email;
+    } else {
+      recipientEmail = contact.email;
+    }
+
+    try {
+      await sendGenericEmail(recipientEmail, `Re: ${contact.subject}`, trimmedMessage);
+    } catch (emailError: any) {
+      console.error("Reply email error:", emailError);
+      return next(errorHandler(500, "Failed to send reply email"));
+    }
+
+    contact.status = "REPLIED";
+    await contact.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Reply sent successfully",
+      data: { contact }
+    });
+  } catch (error: any) {
+    console.error("Reply to contact error:", error);
+    next(errorHandler(500, "Server error while sending reply"));
+  }
+};

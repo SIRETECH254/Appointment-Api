@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
     "dev:mcp": "nodemon --exec ts-node src/index.ts",
-    "seed:roles": "ts-node src/scripts/seedRoles.ts"
+    "seed:roles": "ts-node src/scripts/seedRoles.ts",
+    "seed:store-configuration": "ts-node src/scripts/seedStoreConfiguration.ts"
   },
   "keywords": [],
   "author": "",
@@ -25,6 +26,7 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/validator": "^13.12.3",
     "africastalking": "^0.7.7",
+    "axios": "^1.13.3",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.5",

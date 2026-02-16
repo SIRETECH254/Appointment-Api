@@ -9,10 +9,11 @@ import { deleteFromCloudinary, uploadToCloudinary } from "../config/cloudinary";
 // Get authenticated user profile with roles
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // Load user with populated roles
+    // Load user with populated roles and services
     const user = await User.findById(req.user?._id)
       .select("-password -otpCode -resetPasswordToken")
-      .populate("roles", "name displayName description permissions");
+      .populate("roles", "name displayName description permissions isActive")
+      .populate("services", "name duration fullPrice sortOrder isActive");
 
     if (!user) {
       return next(errorHandler(404, "User not found"));
@@ -249,6 +250,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
     const users = await User.find(query)
       .select("-password -otpCode -resetPasswordToken")
       .populate("roles", "name displayName")
+      .populate("services", "name duration fullPrice sortOrder isActive")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
@@ -278,10 +280,11 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
 export const getUserById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    // Load target user with role details
+    // Load target user with role and service details
     const user = await User.findById(userId)
       .select("-password -otpCode -resetPasswordToken")
-      .populate("roles", "name displayName description permissions");
+      .populate("roles", "name displayName description permissions")
+      .populate("services", "name duration fullPrice sortOrder isActive");
 
     if (!user) {
       return next(errorHandler(404, "User not found"));
@@ -300,7 +303,7 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    const { firstName, lastName, phone, email, avatar } = req.body;
+    const { firstName, lastName, phone, email, avatar, workingHours } = req.body;
     const user = await User.findById(userId);
 
     if (!user) {
@@ -328,6 +331,13 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
       }
 
       user.email = email.toLowerCase();
+    }
+
+    if (workingHours !== undefined) {
+      if (typeof workingHours !== "object" || Array.isArray(workingHours)) {
+        return next(errorHandler(400, "workingHours must be an object"));
+      }
+      user.workingHours = workingHours;
     }
 
     // Handle avatar upload via multipart/form-data
@@ -370,6 +380,12 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
 
     await user.save();
 
+    const roleNames = (user.roles || []).map((role: any) =>
+      role?._id ? role._id.toString() : role.toString()
+    );
+    const staffRole = await Role.findOne({ name: "staff" }).select("_id");
+    const isStaff = staffRole ? roleNames.includes(staffRole._id.toString()) : false;
+
     res.status(200).json({
       success: true,
       message: "User updated successfully",
@@ -382,7 +398,11 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
           phone: user.phone,
           avatar: user.avatar,
           roles: user.roles,
-          isActive: user.isActive
+          isActive: user.isActive,
+          ...(isStaff && {
+            workingHours: user.workingHours,
+            services: user.services
+          })
         }
       }
     });
