@@ -87,7 +87,7 @@ import User from "../models/User";
 #### `createBreak()`
 **Purpose:** Create a break for a staff member  
 **Access:** Admin  
-**Validation:** `staffId`, `startTime`, `endTime` required, `startTime < endTime`  
+**Validation:** `staffId`, `date` (YYYY-MM-DD), `startTime` (HH:MM), `endTime` (HH:MM) required. `startTime < endTime`. Break cannot be in the past.  
 **Response:** Created break
 
 **Controller Implementation:**
@@ -236,36 +236,105 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
 #### `updateBreak()`
 **Purpose:** Update break fields  
 **Access:** Admin  
+**Validation:** `breakId` required. `staffId`, `date` (YYYY-MM-DD), `startTime` (HH:MM), `endTime` (HH:MM) are optional update fields. `startTime < endTime`. Break cannot be in the past.  
 **Response:** Updated break
 
 **Controller Implementation:**
 ```typescript
 export const updateBreak = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { breakId } = req.params;
-    const { staffId, startTime, endTime, reason } = req.body;
+    const breakIdParam = req.params.breakId;
+    const { staffId, date, startTime: timeStart, endTime: timeEnd, reason } = req.body;
+
+    if (!breakIdParam) {
+      return next(errorHandler(400, "breakId is required"));
+    }
+    const breakId = String(breakIdParam);
+    if (!isValidObjectId(breakId)) {
+      return next(errorHandler(400, "Invalid breakId"));
+    }
 
     const existing = await BreakModel.findById(breakId);
     if (!existing) {
       return next(errorHandler(404, "Break not found"));
     }
 
-    if (staffId) {
-      const staff = await User.findById(staffId).select("_id");
+    let updatedStartTime = existing.startTime;
+    let updatedEndTime = existing.endTime;
+    let baseDateForTimes = existing.startTime; // Start with existing break's date part (which is UTC)
+
+    if (date !== undefined) {
+        const newDateUTC = parseNairobiDateToUTC(date);
+        if (!newDateUTC) {
+            return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
+        }
+        baseDateForTimes = newDateUTC;
+    }
+
+    if (staffId !== undefined) {
+      const staffIdStr = String(staffId);
+      if (!isValidObjectId(staffIdStr)) {
+        return next(errorHandler(400, "Invalid staffId"));
+      }
+      const staff = await User.findById(staffIdStr).select("_id");
       if (!staff) {
         return next(errorHandler(404, "Staff not found"));
       }
       existing.staffId = staff._id;
     }
 
-    if (startTime) existing.startTime = new Date(startTime);
-    if (endTime) existing.endTime = new Date(endTime);
-    if (existing.startTime >= existing.endTime) {
+    if (timeStart !== undefined) {
+        const newStart = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeStart);
+        if (!newStart) {
+            return next(errorHandler(400, "Invalid startTime format. Use HH:MM"));
+        }
+        updatedStartTime = newStart;
+    } else if (date !== undefined) {
+        const existingStartHour = existing.startTime.getUTCHours() + 3; // EAT offset
+        const existingStartMinute = existing.startTime.getUTCMinutes();
+        const existingTimeStr = `${String(existingStartHour % 24).padStart(2, '0')}:${String(existingStartMinute).padStart(2, '0')}`;
+        
+        updatedStartTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
+        if (!updatedStartTime) {
+            return next(errorHandler(500, "Failed to reconstruct startTime with new date"));
+        }
+    }
+
+    if (timeEnd !== undefined) {
+        const newEnd = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeEnd);
+        if (!newEnd) {
+            return next(errorHandler(400, "Invalid endTime format. Use HH:MM"));
+        }
+        updatedEndTime = newEnd;
+    } else if (date !== undefined) {
+        const existingEndHour = existing.endTime.getUTCHours() + 3; // EAT offset
+        const existingEndMinute = existing.endTime.getUTCMinutes();
+        const existingTimeStr = `${String(existingEndHour % 24).padStart(2, '0')}:${String(existingEndMinute).padStart(2, '0')}`;
+
+        updatedEndTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
+        if (!updatedEndTime) {
+            return next(errorHandler(500, "Failed to reconstruct endTime with new date"));
+        }
+    }
+    
+    existing.startTime = updatedStartTime;
+    existing.endTime = updatedEndTime;
+
+    if (existing.startTime.getTime() >= existing.endTime.getTime()) {
       return next(errorHandler(400, "startTime must be earlier than endTime"));
     }
 
+    const nowUTC = new Date();
+    if (existing.endTime.getTime() <= nowUTC.getTime()) {
+        return next(errorHandler(400, "Cannot update a break to be in the past"));
+    }
+
     if (reason !== undefined) {
-      existing.reason = typeof reason === "string" ? reason.trim() : undefined;
+      if (reason === null || (typeof reason === "string" && reason.trim().length === 0)) {
+        existing.set("reason", undefined);
+      } else if (typeof reason === "string") {
+        existing.reason = reason.trim();
+      }
     }
 
     await existing.save();
@@ -276,6 +345,7 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       data: { break: existing }
     });
   } catch (error: any) {
+    console.error("Update break error:", error);
     next(errorHandler(500, "Server error while updating break"));
   }
 };
@@ -406,16 +476,18 @@ export default router;
 #### `POST /api/breaks`
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body:**
-```json
+\`\`\`json
 {
   "staffId": "<staffId>",
-  "startTime": "2026-01-23T12:00:00.000Z",
-  "endTime": "2026-01-23T12:30:00.000Z",
+  "date": "2026-01-23",
+  "startTime": "12:00",
+  "endTime": "12:30",
   "reason": "Lunch"
 }
-```
+\`\`\`
+**(Note: 'date', 'startTime', and 'endTime' are interpreted in Africa/Nairobi timezone and combined to form UTC `Date` objects for storage.)**
 **Response:**
-```json
+\`\`\`json
 {
   "success": true,
   "message": "Break created successfully",
@@ -423,30 +495,42 @@ export default router;
     "break": {
       "_id": "...",
       "staffId": "...",
-      "startTime": "2026-01-23T12:00:00.000Z",
-      "endTime": "2026-01-23T12:30:00.000Z"
+      "startTime": "2026-01-23T09:00:00.000Z",
+      "endTime": "2026-01-23T10:00:00.000Z"
     }
   }
 }
-```
+\`\`\`
+*(Note: Response `startTime` and `endTime` are UTC, which might differ from the local times sent in the request due to timezone conversion.)*
 
 #### `PUT /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body:**
-```json
+\`\`\`json
 {
-  "startTime": "2026-01-23T13:00:00.000Z",
-  "endTime": "2026-01-23T13:30:00.000Z",
+  "date": "2026-01-23",
+  "startTime": "13:00",
+  "endTime": "13:30",
   "reason": "Updated reason"
 }
-```
+\`\`\`
+**(Note: 'date', 'startTime', and 'endTime' are interpreted in Africa/Nairobi timezone and combined to form UTC `Date` objects for storage.)**
 **Response:**
-```json
+\`\`\`json
 {
   "success": true,
-  "message": "Break updated successfully"
+  "message": "Break updated successfully",
+  "data": {
+    "break": {
+      "_id": "...",
+      "staffId": "...",
+      "startTime": "2026-01-23T10:00:00.000Z",
+      "endTime": "2026-01-23T10:30:00.000Z"
+    }
+  }
 }
-```
+\`\`\`
+*(Note: Response `startTime` and `endTime` are UTC, which might differ from the local times sent in the request due to timezone conversion.)*
 
 #### `DELETE /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  

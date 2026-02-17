@@ -5,55 +5,27 @@ import User from "../models/User";
 import Service from "../models/Service";
 import Appointment from "../models/Appointment";
 import BreakModel from "../models/Break";
+import {
+  checkSlotAvailability,
+  parseNairobiDateToUTC,
+  combineNairobiDateAndTimeToUTC,
+  buildNairobiDayRangeUTC,
+  startOfTodayNairobiUTC,
+  getDayKey // Also import getDayKey from utils now
+} from "../utils/availability"; // Import utility functions
 
 type TimeRange = { start: Date; end: Date };
 
 const isValidObjectId = (value: string): boolean => mongoose.Types.ObjectId.isValid(value);
 
-const parseDateOnly = (date: string): Date | null => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return null;
-  }
-  const parsed = new Date(`${date}T00:00:00`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const parseTime = (time: string): { hours: number; minutes: number } | null => {
-  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
-  if (!match) return null;
-  return { hours: parseInt(match[1]!, 10), minutes: parseInt(match[2]!, 10) };
-};
-
-const combineDateAndTime = (date: Date, time: string): Date | null => {
-  const parsed = parseTime(time);
-  if (!parsed) return null;
-  const combined = new Date(date);
-  combined.setHours(parsed.hours, parsed.minutes, 0, 0);
-  return combined;
-};
-
-const addMinutes = (date: Date, minutes: number): Date =>
-  new Date(date.getTime() + minutes * 60 * 1000);
-
 const overlaps = (slot: TimeRange, event: TimeRange): boolean =>
   slot.start < event.end && slot.end > event.start;
 
-const buildDayRange = (date: Date): { start: Date; end: Date } => {
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { start, end };
-};
-
-const getDayKey = (date: Date): string => {
-  const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  return days[date.getDay()] ?? "sunday";
-};
-
+// This computeSlots needs to use the new combineNairobiDateAndTimeToUTC and buildNairobiDayRangeUTC
+// This function needs to be updated. It still uses combineDateAndTime and buildDayRange.
 const computeSlots = (
   workingRanges: Array<{ start: string; end: string }>,
-  date: Date,
+  date: Date, // This 'date' is expected to be a UTC date, corresponding to Nairobi local midnight
   durationMinutes: number,
   events: TimeRange[]
 ): { totalSlots: number; availableSlots: TimeRange[] } => {
@@ -61,15 +33,16 @@ const computeSlots = (
   const availableSlots: TimeRange[] = [];
 
   for (const range of workingRanges) {
-    const rangeStart = combineDateAndTime(date, range.start);
-    const rangeEnd = combineDateAndTime(date, range.end);
+    // Use the new Nairobi-aware combine function
+    const rangeStart = combineNairobiDateAndTimeToUTC(date, range.start);
+    const rangeEnd = combineNairobiDateAndTimeToUTC(date, range.end);
     if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) {
       continue;
     }
 
     let slotStart = new Date(rangeStart);
     while (true) {
-      const slotEnd = addMinutes(slotStart, durationMinutes);
+      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000); // addMinutes equivalent
       if (slotEnd > rangeEnd) break;
 
       const slot = { start: new Date(slotStart), end: slotEnd };
@@ -120,13 +93,13 @@ export const getAvailableSlots = async (
       return next(errorHandler(400, "Invalid staffId or serviceId"));
     }
 
-    const dateOnly = parseDateOnly(dateStr);
-    if (!dateOnly) {
+    const dateOnlyUTC = parseNairobiDateToUTC(dateStr);
+    if (!dateOnlyUTC) {
       return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
     }
 
-    const todayStart = startOfToday();
-    if (dateOnly < todayStart) {
+    const todayStartNairobiUTC = startOfTodayNairobiUTC();
+    if (dateOnlyUTC.getTime() < todayStartNairobiUTC.getTime()) {
       res.status(200).json({
         success: true,
         message: "date has passed",
@@ -160,9 +133,9 @@ export const getAvailableSlots = async (
       return next(errorHandler(404, "One or more services not found"));
     }
 
-    const totalDuration = services.reduce((sum, item) => sum + item.duration, 0);
+    const totalDuration = services.reduce((sum, item) => sum + (item.duration || 0), 0);
 
-    const dayKey = getDayKey(dateOnly);
+    const dayKey = getDayKey(dateOnlyUTC);
     const workingRanges = staff.workingHours?.[dayKey as keyof typeof staff.workingHours] || [];
 
     if (!workingRanges || workingRanges.length === 0) {
@@ -174,7 +147,7 @@ export const getAvailableSlots = async (
       return;
     }
 
-    const { start, end } = buildDayRange(dateOnly);
+    const { start, end } = buildNairobiDayRangeUTC(dateOnlyUTC);
 
     const appointments = await Appointment.find({
       staffId: staffIdStr,
@@ -193,14 +166,14 @@ export const getAvailableSlots = async (
       ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
     ];
 
-    const { availableSlots } = computeSlots(workingRanges, dateOnly, totalDuration, events);
-    const now = new Date();
+    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events);
+    const nowUTC = new Date();
     const filteredSlots =
-      dateOnly.getTime() === todayStart.getTime()
-        ? availableSlots.filter((slot) => slot.end > now)
+      dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
+        ? availableSlots.filter((slot) => slot.end.getTime() > nowUTC.getTime())
         : availableSlots;
 
-    if (filteredSlots.length === 0 && dateOnly.getTime() === todayStart.getTime()) {
+    if (filteredSlots.length === 0 && dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()) {
       res.status(200).json({
         success: true,
         message: "time has passed",
@@ -244,13 +217,13 @@ export const getDayAvailability = async (
       return next(errorHandler(400, "Invalid staffId or serviceId"));
     }
 
-    const dateOnly = parseDateOnly(dateStr);
-    if (!dateOnly) {
+    const dateOnlyUTC = parseNairobiDateToUTC(dateStr);
+    if (!dateOnlyUTC) {
       return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
     }
 
-    const todayStart = startOfToday();
-    if (dateOnly < todayStart) {
+    const todayStartNairobiUTC = startOfTodayNairobiUTC();
+    if (dateOnlyUTC.getTime() < todayStartNairobiUTC.getTime()) {
       res.status(200).json({
         success: true,
         message: "date has passed",
@@ -292,9 +265,9 @@ export const getDayAvailability = async (
       return next(errorHandler(404, "One or more services not found"));
     }
 
-    const totalDuration = services.reduce((sum, item) => sum + item.duration, 0);
+    const totalDuration = services.reduce((sum, item) => sum + (item.duration || 0), 0);
 
-    const dayKey = getDayKey(dateOnly);
+    const dayKey = getDayKey(dateOnlyUTC);
     const workingRanges = staff.workingHours?.[dayKey as keyof typeof staff.workingHours] || [];
 
     if (!workingRanges || workingRanges.length === 0) {
@@ -310,7 +283,7 @@ export const getDayAvailability = async (
       return;
     }
 
-    const { start, end } = buildDayRange(dateOnly);
+    const { start, end } = buildNairobiDayRangeUTC(dateOnlyUTC);
 
     const appointments = await Appointment.find({
       staffId: staffIdStr,
@@ -331,18 +304,18 @@ export const getDayAvailability = async (
 
     const { totalSlots, availableSlots } = computeSlots(
       workingRanges,
-      dateOnly,
+      dateOnlyUTC,
       totalDuration,
       events
     );
 
-    const now = new Date();
+    const nowUTC = new Date();
     const filteredSlots =
-      dateOnly.getTime() === todayStart.getTime()
-        ? availableSlots.filter((slot) => slot.end > now)
+      dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
+        ? availableSlots.filter((slot) => slot.end.getTime() > nowUTC.getTime())
         : availableSlots;
 
-    if (filteredSlots.length === 0 && dateOnly.getTime() === todayStart.getTime()) {
+    if (filteredSlots.length === 0 && dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()) {
       res.status(200).json({
         success: true,
         message: "time has passed",

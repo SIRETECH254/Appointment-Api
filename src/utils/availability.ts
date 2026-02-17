@@ -4,9 +4,16 @@ import User from "../models/User";
 
 type TimeRange = { start: Date; end: Date };
 
-const getDayKey = (date: Date): string => {
+// Nairobi is UTC+3
+// Nairobi is UTC+3. Store configuration's businessHoursTimezone is "Africa/Nairobi".
+const NAIROBI_TZ_OFFSET_HOURS = 3;
+
+// Helper to get the day of the week, considering Nairobi's timezone for a given UTC date.
+export const getDayKey = (dateUTC: Date): string => {
   const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  return days[date.getDay()] ?? "sunday";
+  // Adjust the UTC date to Nairobi's day before getting the day of the week
+  const dateInNairobi = new Date(dateUTC.getTime() + NAIROBI_TZ_OFFSET_HOURS * 3600 * 1000);
+  return days[dateInNairobi.getUTCDay()] ?? "sunday"; // Using getUTCDay() on the adjusted date
 };
 
 const parseTime = (time: string): { hours: number; minutes: number } | null => {
@@ -15,40 +22,82 @@ const parseTime = (time: string): { hours: number; minutes: number } | null => {
   return { hours: parseInt(match[1]!, 10), minutes: parseInt(match[2]!, 10) };
 };
 
-const combineDateAndTime = (date: Date, time: string): Date | null => {
-  const parsed = parseTime(time);
-  if (!parsed) return null;
-  const combined = new Date(date);
-  combined.setHours(parsed.hours, parsed.minutes, 0, 0);
+// Parses a YYYY-MM-DD date string, interprets it as Nairobi local midnight,
+// and returns the corresponding UTC Date object.
+export const parseNairobiDateToUTC = (dateStr: string): Date | null => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return null;
+  }
+  // Construct a date string with explicit Nairobi offset
+  // e.g., "2026-01-25T00:00:00+03:00"
+  const parsed = new Date(`${dateStr}T00:00:00+03:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+// Combines a UTC base date (representing a day) with a time string (HH:MM, Nairobi local)
+// and returns the corresponding UTC Date object.
+export const combineNairobiDateAndTimeToUTC = (baseDateUTC: Date, timeString: string): Date | null => {
+  const parsedTime = parseTime(timeString);
+  if (!parsedTime) return null;
+
+  const combined = new Date(baseDateUTC.getTime());
+  // Set the hours and minutes in UTC, adjusted by Nairobi's offset.
+  // Example: if baseDateUTC represents 2026-01-25T00:00:00 EAT (which is 2026-01-24T21:00:00Z UTC)
+  // And timeString is "09:00", we want 2026-01-25T09:00:00 EAT (which is 2026-01-25T06:00:00Z UTC)
+  // So we add (parsedTime.hours - NAIROBI_TZ_OFFSET_HOURS) to the UTC hours.
+  combined.setUTCHours(parsedTime.hours - NAIROBI_TZ_OFFSET_HOURS, parsedTime.minutes, 0, 0);
+
   return combined;
 };
+
 
 const overlaps = (slot: TimeRange, event: TimeRange): boolean =>
   slot.start < event.end && slot.end > event.start;
 
 const isWithinWorkingHours = (
   workingRanges: Array<{ start: string; end: string }>,
-  start: Date,
-  end: Date
+  targetTimeUTC: Date, // A point in time for which we check if it's within working hours
+  targetEndTimeUTC: Date
 ): boolean => {
   for (const range of workingRanges) {
-    const rangeStart = combineDateAndTime(start, range.start);
-    const rangeEnd = combineDateAndTime(start, range.end);
+    // Both rangeStart and rangeEnd must be UTC dates representing Nairobi local times
+    const rangeStart = combineNairobiDateAndTimeToUTC(targetTimeUTC, range.start);
+    const rangeEnd = combineNairobiDateAndTimeToUTC(targetTimeUTC, range.end);
     if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) {
       continue;
     }
-    if (start >= rangeStart && end <= rangeEnd) {
+    // All comparisons now happen in UTC
+    if (targetTimeUTC.getTime() >= rangeStart.getTime() && targetEndTimeUTC.getTime() <= rangeEnd.getTime()) {
       return true;
     }
   }
   return false;
 };
 
+// Builds a UTC date range representing the start and end of a specific Nairobi day.
+export const buildNairobiDayRangeUTC = (dateUTC: Date): { start: Date; end: Date } => {
+  // 'dateUTC' here is expected to be a UTC date corresponding to midnight Nairobi time
+  const start = new Date(dateUTC.getTime());
+  const end = new Date(start.getTime());
+  end.setUTCDate(end.getUTCDate() + 1); // Move to the next UTC day
+  return { start, end };
+};
+
+export const startOfTodayNairobiUTC = (): Date => {
+  const now = new Date();
+  // Get current time in Nairobi's perspective
+  const nowInNairobi = new Date(now.getTime() + NAIROBI_TZ_OFFSET_HOURS * 3600 * 1000);
+  // Set to midnight in Nairobi's perspective (UTC components relative to Nairobi day)
+  nowInNairobi.setUTCHours(0, 0, 0, 0);
+  // Convert back to true UTC instant
+  return new Date(nowInNairobi.getTime() - NAIROBI_TZ_OFFSET_HOURS * 3600 * 1000);
+};
+
 export interface SlotAvailabilityParams {
   staffId: string;
   serviceIds: string[];
-  startTime: Date;
-  endTime: Date;
+  startTime: Date; // UTC date, representing Nairobi local time
+  endTime: Date;   // UTC date, representing Nairobi local time
   excludeAppointmentId?: string;
 }
 
@@ -73,6 +122,7 @@ export const checkSlotAvailability = async (
     return { ok: false, message: "Staff does not provide requested services" };
   }
 
+  // startTime is already a UTC date representing Nairobi local
   const dayKey = getDayKey(startTime);
   const workingRanges = staff.workingHours?.[dayKey as keyof typeof staff.workingHours] || [];
   if (!workingRanges || workingRanges.length === 0) {
@@ -82,7 +132,6 @@ export const checkSlotAvailability = async (
   if (!isWithinWorkingHours(workingRanges, startTime, endTime)) {
     return { ok: false, message: "Appointment time is outside working hours" };
   }
-
   const appointmentQuery: any = {
     staffId,
     startTime: { $lt: endTime },
