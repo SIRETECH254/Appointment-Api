@@ -183,8 +183,8 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       return next(errorHandler(404, "Break not found"));
     }
 
-    let updatedStartTime = existing.startTime;
-    let updatedEndTime = existing.endTime;
+    let updatedStartTime: Date | null = existing.startTime;
+    let updatedEndTime: Date | null = existing.endTime;
     let baseDateForTimes = existing.startTime; // Start with existing break's date part (which is UTC)
 
     // If a new date is provided, update the base date for time calculations
@@ -247,8 +247,8 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
     }
     
     // Apply updated times to the existing document
-    existing.startTime = updatedStartTime;
-    existing.endTime = updatedEndTime;
+    existing.startTime = updatedStartTime!;
+    existing.endTime = updatedEndTime!;
 
     if (existing.startTime.getTime() >= existing.endTime.getTime()) {
       return next(errorHandler(400, "startTime must be earlier than endTime"));
