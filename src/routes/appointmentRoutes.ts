@@ -342,7 +342,7 @@ router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getAppoin
  *       "200":
  *         description: A list of the customer''s appointments.
  */
-router.get("/my", authenticateToken, authorizeRoles(["customer"]), getMyAppointments);
+router.get("/my", authenticateToken, getMyAppointments);
 /**
  * @swagger
  * /api/appointments/{appointmentId}:
