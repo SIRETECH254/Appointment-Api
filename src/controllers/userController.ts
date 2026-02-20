@@ -772,3 +772,73 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
     next(errorHandler(500, "Server error while fetching customers"));
   }
 };
+
+// Admin list of staff by role
+export const getStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { page = 1, limit = 10, search, status } = req.query;
+    const staffRole = await Role.findOne({ name: "staff" });
+
+    // Ensure staff role exists
+    if (!staffRole) {
+      return next(errorHandler(404, "Staff role not found. Please run seed script first."));
+    }
+
+    // Build query filters
+    const query: any = { roles: staffRole._id };
+
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    if (status === "active") {
+      query.isActive = true;
+    } else if (status === "inactive") {
+      query.isActive = false;
+    }
+
+    if (status === "verified") {
+      query.emailVerified = true;
+    } else if (status === "unverified") {
+      query.emailVerified = false;
+    }
+
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query staff with pagination
+    const staff = await User.find(query)
+      .select("-password -otpCode -resetPasswordToken")
+      .populate("roles", "name displayName")
+      .populate("services", "name duration fullPrice sortOrder isActive")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        staff,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalStaff: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while fetching staff"));
+  }
+};

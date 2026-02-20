@@ -1076,7 +1076,87 @@ export const getCustomers = async (req: Request, res: Response, next: NextFuncti
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching customers"));
   }
+}
+```
+
+#### `getStaff(query)`
+**Purpose:** List users with staff role  
+**Access:** Authenticated users  
+**Validation:** Staff role must exist  
+**Process:** Filter staff with pagination and status filters  
+**Response:** Users + pagination
+
+**Controller Implementation:**
+```typescript
+export const getStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { page = 1, limit = 10, search, status } = req.query;
+    const staffRole = await Role.findOne({ name: "staff" });
+
+    // Ensure staff role exists
+    if (!staffRole) {
+      return next(errorHandler(404, "Staff role not found. Please run seed script first."));
+    }
+
+    // Build query filters
+    const query: any = { roles: staffRole._id };
+
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    if (status === "active") {
+      query.isActive = true;
+    } else if (status === "inactive") {
+      query.isActive = false;
+    }
+
+    if (status === "verified") {
+      query.emailVerified = true;
+    } else if (status === "unverified") {
+      query.emailVerified = false;
+    }
+
+    // Pagination options
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    // Query staff with pagination
+    const staff = await User.find(query)
+      .select("-password -otpCode -resetPasswordToken")
+      .populate("roles", "name displayName")
+      .populate("services", "name duration fullPrice sortOrder isActive")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    // Total count for pagination
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        staff,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalStaff: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while fetching staff"));
+  }
 };
+```
 ```
 
 ---
@@ -1093,6 +1173,7 @@ GET    /notifications            // Get notification preferences
 PUT    /notifications            // Update notification preferences
 POST   /admin-create             // Admin create customer
 GET    /customers                // Get customers (admin)
+GET    /staff                    // Get staff (any authenticated user)
 GET    /                         // Get all users (admin)
 GET    /:userId                  // Get single user (admin)
 PUT    /:userId                  // Update user (admin)
@@ -1126,7 +1207,8 @@ import {
   adminCreateCustomer,
   assignRole,
   removeRole,
-  getCustomers
+  getCustomers,
+  getStaff
 } from '../controllers/userController';
 import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/auth';
 
@@ -1145,6 +1227,8 @@ router.put('/notifications', authenticateToken, updateNotificationPreferences);
 router.post('/admin-create', authenticateToken, authorizeRoles(['admin']), adminCreateCustomer);
 
 router.get('/customers', authenticateToken, authorizeRoles(['admin']), getCustomers);
+
+router.get('/staff', authenticateToken, getStaff);
 
 router.get('/', authenticateToken, authorizeRoles(['admin']), getAllUsers);
 
@@ -1337,6 +1421,27 @@ export default router;
     }
   }
 }
+```
+
+#### `GET /api/users/staff`
+**Headers:** `Authorization: Bearer <token>`
+**Query:** `page`, `limit`, `search`, `status`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "staff": [],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalStaff": 0
+    }
+  }
+}
+```
+**Notes:**
+- `services` is populated for staff users who have assigned services.
 ```
 
 #### `GET /api/users/:userId`
