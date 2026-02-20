@@ -1157,9 +1157,7 @@ export const getStaff = async (req: Request, res: Response, next: NextFunction):
   }
 };
 ```
-```
 
----
 
 ## 🛣️ User Routes
 
@@ -1184,6 +1182,8 @@ DELETE /:userId                  // Delete user (admin)
 POST   /:userId/roles            // Assign role to user (admin)
 DELETE /:userId/roles/:roleId    // Remove role from user (admin)
 ```
+
+
 
 ### Router Implementation
 
