@@ -299,14 +299,19 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const appointment = await Appointment.findById(payment.appointmentId);
-    if (!appointment) {
-      res.status(200).json({ success: false });
-      return;
-    }
-
     payment.transactionRef = parsed.checkoutRequestId;
-    await applySuccessfulPayment({ appointment, payment, io });
+    
+    if (payment.appointmentId) {
+      const appointment = await Appointment.findById(payment.appointmentId);
+      if (!appointment) {
+        res.status(200).json({ success: false });
+        return;
+      }
+      await applySuccessfulPayment({ appointment, payment, io });
+    } else {
+      await applySuccessfulPayment({ appointment: null, payment, io });
+    }
+    
     res.status(200).json({ success: true });
   } catch (error: any) {
     next(errorHandler(500, "Server error while processing M-Pesa webhook"));
@@ -348,14 +353,19 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    const appointment = await Appointment.findById(payment.appointmentId);
-    if (!appointment) {
-      res.status(200).json({ success: false });
-      return;
-    }
-
     payment.transactionRef = parsed.reference;
-    await applySuccessfulPayment({ appointment, payment, io: req.app.get("io") });
+    
+    if (payment.appointmentId) {
+      const appointment = await Appointment.findById(payment.appointmentId);
+      if (!appointment) {
+        res.status(200).json({ success: false });
+        return;
+      }
+      await applySuccessfulPayment({ appointment, payment, io: req.app.get("io") });
+    } else {
+      await applySuccessfulPayment({ appointment: null, payment, io: req.app.get("io") });
+    }
+    
     res.status(200).json({ success: true });
   } catch (error: any) {
     next(errorHandler(500, "Server error while processing Paystack webhook"));
@@ -391,6 +401,7 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
 
     // Query payments with pagination
     const payments = await Payment.find(query)
+      .populate("appointmentId", "startTime status")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
@@ -482,6 +493,13 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
     const payment = await Payment.findById(paymentId);
     if (!payment) return next(errorHandler(404, "Payment not found"));
 
+    const roleNames = req.user?.roleNames || [];
+    const isPrivileged = roleNames.includes("admin") || roleNames.includes("staff");
+    
+    if (!isPrivileged && (!payment.customerId || payment.customerId.toString() !== req.user?._id.toString())) {
+      return next(errorHandler(403, "Access denied"));
+    }
+
     res.status(200).json({ success: true, data: { payment } });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching payment"));
@@ -490,7 +508,7 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 ```
 
 #### `checkPaymentStatus(checkoutRequestId)`
-**Purpose:** Check M-Pesa STK push payment status using checkoutRequestId  
+**Purpose:** Check M-Pesa STK push payment status and proactively update records  
 **Access:** Authenticated users  
 **Validation:**
 - `checkoutRequestId` is required (from params or query)
@@ -498,6 +516,9 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 **Process:**
 - Find payment by checkoutRequestId in processorRefs
 - Query Daraja API for current STK push status
+- **Proactive Update:** If the internal payment status is `PENDING` and a definitive result is returned from Daraja:
+    - If `resultCode` is 0 (Success), calls `applySuccessfulPayment()` to update payment/appointment.
+    - If `resultCode` is non-zero (e.g., Cancelled, Insufficient Funds), marks payment as `FAILED`.
 - Return payment details along with status query result
 **Response:** Payment details and Daraja status response
 
@@ -523,6 +544,27 @@ export const checkPaymentStatus = async (req: Request, res: Response, next: Next
 
     // Query Daraja API for STK push status
     const statusResult = await queryStkPushStatus({ checkoutRequestId });
+
+    // Proactively update payment if it's pending and we have a definitive result
+    if (payment.status === "PENDING" && statusResult.ok && statusResult.resultCode !== undefined) {
+      const io = req.app.get("io");
+      if (statusResult.resultCode === 0) {
+        // Success
+        if (payment.appointmentId) {
+          const appointment = await Appointment.findById(payment.appointmentId);
+          if (appointment) {
+            await applySuccessfulPayment({ appointment, payment, io });
+          }
+        } else {
+          await applySuccessfulPayment({ appointment: null, payment, io });
+        }
+      } else {
+        // Failure (codes like 1032, 1, etc.)
+        payment.status = "FAILED";
+        await payment.save();
+        io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+      }
+    }
 
     // Return payment details along with status query result
     res.status(200).json({
@@ -575,6 +617,7 @@ export const createPaymentRecord = async (params: CreatePaymentRecordParams): Pr
 
   const payment = await Payment.create({
     paymentNumber,
+    customerId: params.customer?._id,
     appointmentId: params.appointment?._id || null,
     amount: params.amount,
     method: params.method,
@@ -1182,6 +1225,7 @@ import {
   mpesaWebhook,
   paystackWebhook,
   getPayments,
+  getMyPayments,
   getPayment,
   checkPaymentStatus
 } from "../controllers/paymentController";
@@ -1194,6 +1238,7 @@ router.post("/service-payment", authenticateToken, servicePayment);
 router.post("/webhooks/mpesa", mpesaWebhook);
 router.post("/webhooks/paystack", paystackWebhook);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getPayments);
+router.get("/my-payments", authenticateToken, getMyPayments);
 router.get("/status/:checkoutRequestId", authenticateToken, checkPaymentStatus);
 router.get("/:paymentId", authenticateToken, getPayment);
 
@@ -1302,7 +1347,35 @@ export default router;
 **Headers:** `Authorization: Bearer <token>`  
 **Purpose:** Get payment history for the authenticated user  
 **Query:** `status`, `method`, `startDate`, `endDate`, `page`, `limit`
-**Response:** Same format as `GET /api/payments`
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payments": [
+      {
+        "_id": "...",
+        "customerId": "...",
+        "paymentNumber": "PAY-2026-0001",
+        "amount": 500,
+        "status": "SUCCESS",
+        "appointmentId": {
+          "_id": "...",
+          "startTime": "2026-02-23T10:00:00.000Z",
+          "status": "CONFIRMED"
+        }
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 1,
+      "totalPayments": 1,
+      "hasNextPage": false,
+      "hasPrevPage": false
+    }
+  }
+}
+```
 
 #### `GET /api/payments/status/:checkoutRequestId`
 **Headers:** `Authorization: Bearer <token>`  
@@ -1481,7 +1554,7 @@ curl -X GET http://localhost:4500/api/payments/status/<checkoutRequestId> \
   }
 }
 ```
-**Note:** This endpoint queries the Daraja API to get the real-time status of an M-Pesa STK push transaction. Use this to check payment status when webhooks are delayed or to poll for status updates.
+**Note:** This endpoint queries the Daraja API to get the real-time status of an M-Pesa STK push transaction. It proactively synchronizes the local database status with the gateway's result—applying successful payments or marking failures—ensuring consistency even if webhooks are missed. Use this to manually verify status or poll for updates.
 
 ### Get Payment
 ```bash

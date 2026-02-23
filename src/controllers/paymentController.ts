@@ -371,6 +371,27 @@ export const checkPaymentStatus = async (req: Request, res: Response, next: Next
     // Query Daraja API for STK push status
     const statusResult = await queryStkPushStatus({ checkoutRequestId });
 
+    // Proactively update payment if it's pending and we have a definitive result
+    if (payment.status === "PENDING" && statusResult.ok && statusResult.resultCode !== undefined) {
+      const io = req.app.get("io");
+      if (statusResult.resultCode === 0) {
+        // Success
+        if (payment.appointmentId) {
+          const appointment = await Appointment.findById(payment.appointmentId);
+          if (appointment) {
+            await applySuccessfulPayment({ appointment, payment, io });
+          }
+        } else {
+          await applySuccessfulPayment({ appointment: null, payment, io });
+        }
+      } else {
+        // Failure (codes like 1032, 1, etc.)
+        payment.status = "FAILED";
+        await payment.save();
+        io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+      }
+    }
+
     // Return payment details along with status query result
     res.status(200).json({
       success: true,
