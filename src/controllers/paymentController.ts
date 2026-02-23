@@ -253,6 +253,7 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
 
     // Query payments with pagination
     const payments = await Payment.find(query)
+      .populate("appointmentId", "startTime status")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
@@ -278,6 +279,50 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+export const getMyPayments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { status, method, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const query: any = { customerId: req.user?._id };
+    
+    if (status) query.status = status;
+    if (method) query.method = method;
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(String(startDate));
+      if (endDate) query.createdAt.$lte = new Date(String(endDate));
+    }
+
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    const payments = await Payment.find(query)
+      .populate("appointmentId", "startTime status")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await Payment.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        payments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalPayments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while fetching your payments"));
+  }
+};
+
 export const getPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { paymentId } = req.params;
@@ -286,11 +331,9 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 
     const roleNames = req.user?.roleNames || [];
     const isPrivileged = roleNames.includes("admin") || roleNames.includes("staff");
-    if (!isPrivileged) {
-      const appointment = await Appointment.findById(payment.appointmentId).select("customerId");
-      if (!appointment || appointment.customerId.toString() !== req.user?._id.toString()) {
-        return next(errorHandler(403, "Access denied"));
-      }
+    
+    if (!isPrivileged && (!payment.customerId || payment.customerId.toString() !== req.user?._id.toString())) {
+      return next(errorHandler(403, "Access denied"));
     }
 
     res.status(200).json({ success: true, data: { payment } });

@@ -42,6 +42,7 @@ export interface IAppointment extends Document {
 
 export interface IPayment extends Document {
   _id: Types.ObjectId;
+  customerId?: Types.ObjectId;
   appointmentId?: Types.ObjectId;
   paymentNumber: string;
   amount: number;

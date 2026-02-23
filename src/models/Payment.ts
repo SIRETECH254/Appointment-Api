@@ -3,6 +3,11 @@ import type { IPayment } from "../types/index";
 
 const paymentSchema = new Schema<IPayment>(
   {
+    customerId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false
+    },
     appointmentId: {
       type: Schema.Types.ObjectId,
       ref: "Appointment",
@@ -57,6 +62,7 @@ const paymentSchema = new Schema<IPayment>(
   { timestamps: true }
 );
 
+paymentSchema.index({ customerId: 1 });
 paymentSchema.index({ appointmentId: 1 });
 paymentSchema.index({ paymentNumber: 1 }, { unique: true });
 paymentSchema.index({ status: 1, createdAt: 1 });

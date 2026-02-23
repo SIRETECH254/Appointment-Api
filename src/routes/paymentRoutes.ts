@@ -13,6 +13,7 @@ import {
   mpesaWebhook,
   paystackWebhook,
   getPayments,
+  getMyPayments,
   getPayment,
   checkPaymentStatus
 } from "../controllers/paymentController";
@@ -208,6 +209,60 @@ router.post("/webhooks/paystack", paystackWebhook);
  *         description: Server error.
  */
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getPayments);
+/**
+ * @swagger
+ * /api/payments/my-payments:
+ *   get:
+ *     summary: Get payment history for the authenticated user
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [PENDING, SUCCESS, FAILED]
+ *         description: Filter payments by their status.
+ *       - in: query
+ *         name: method
+ *         schema:
+ *           type: string
+ *           enum: [MPESA, CARD, CASH]
+ *         description: Filter payments by payment method.
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter payments created on or after this date.
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter payments created on or before this date.
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page.
+ *     responses:
+ *       "200":
+ *         description: A paginated list of the user's payments.
+ *       "401":
+ *         description: Unauthorized.
+ *       "500":
+ *         description: Server error.
+ */
+router.get("/my-payments", authenticateToken, getMyPayments);
 /**
  * @swagger
  * /api/payments/status/{checkoutRequestId}:

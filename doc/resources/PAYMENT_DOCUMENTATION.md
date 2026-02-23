@@ -31,6 +31,7 @@ Key flow:
 ```typescript
 interface IPayment {
   _id: ObjectId;
+  customerId?: ObjectId;
   appointmentId?: ObjectId;
   paymentNumber: string;
   amount: number;
@@ -50,11 +51,13 @@ interface IPayment {
 
 ### Model Notes
 - `paymentNumber` is generated using a running yearly sequence (SIRE-style).
+- `customerId` is optional - used to link payments to specific users for history retrieval.
 - `appointmentId` is optional - can be null for service-only payments (no appointment)
 - `processorRefs` stores gateway IDs for later reconciliation.
 
 ### Validation Rules
 ```typescript
+customerId:    { required: false, ref: "User" }
 appointmentId: { required: false, ref: "Appointment" }
 paymentNumber: { required: true, unique: true }
 amount:        { required: true, min: 0 }
@@ -410,6 +413,59 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while fetching payments"));
+  }
+};
+```
+
+#### `getMyPayments()`
+**Purpose:** List payments for the authenticated user  
+**Access:** Customer/Staff/Admin  
+**Filters:** date range, status, method  
+**Pagination:** `page`, `limit` (default: page=1, limit=10)
+
+**Controller Implementation:**
+```typescript
+export const getMyPayments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { status, method, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const query: any = { customerId: req.user?._id };
+    
+    if (status) query.status = status;
+    if (method) query.method = method;
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(String(startDate));
+      if (endDate) query.createdAt.$lte = new Date(String(endDate));
+    }
+
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    const payments = await Payment.find(query)
+      .populate("appointmentId", "startTime status")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await Payment.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        payments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalPayments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while fetching your payments"));
   }
 };
 ```
@@ -1108,9 +1164,10 @@ POST   /initiate                       // Initiate payment (services-based)
 POST   /service-payment                // Pay remaining amount
 POST   /webhooks/mpesa                 // Daraja callback
 POST   /webhooks/paystack              // Paystack callback
-GET    /                               // List payments
+GET    /                               // List all payments (Admin)
+GET    /my-payments                    // List user's payments
 GET    /status/:checkoutRequestId      // Check M-Pesa payment status
-GET    /:paymentId                     // Get payment
+GET    /:paymentId                     // Get payment details
 ```
 
 ### Router Implementation
@@ -1240,6 +1297,12 @@ export default router;
   }
 }
 ```
+
+#### `GET /api/payments/my-payments`
+**Headers:** `Authorization: Bearer <token>`  
+**Purpose:** Get payment history for the authenticated user  
+**Query:** `status`, `method`, `startDate`, `endDate`, `page`, `limit`
+**Response:** Same format as `GET /api/payments`
 
 #### `GET /api/payments/status/:checkoutRequestId`
 **Headers:** `Authorization: Bearer <token>`  
@@ -1463,6 +1526,7 @@ Common responses:
 ## 📊 Database Indexes
 
 ```typescript
+paymentSchema.index({ customerId: 1 });
 paymentSchema.index({ appointmentId: 1 });
 paymentSchema.index({ paymentNumber: 1 }, { unique: true });
 paymentSchema.index({ status: 1, createdAt: 1 });
