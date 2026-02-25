@@ -371,24 +371,31 @@ export const checkPaymentStatus = async (req: Request, res: Response, next: Next
     // Query Daraja API for STK push status
     const statusResult = await queryStkPushStatus({ checkoutRequestId });
 
-    // Proactively update payment if it's pending and we have a definitive result
-    if (payment.status === "PENDING" && statusResult.ok && statusResult.resultCode !== undefined) {
+    // Proactively update payment if we have a definitive result from Daraja
+    if (statusResult.ok && statusResult.resultCode !== undefined) {
       const io = req.app.get("io");
-      if (statusResult.resultCode === 0) {
-        // Success
-        if (payment.appointmentId) {
-          const appointment = await Appointment.findById(payment.appointmentId);
-          if (appointment) {
-            await applySuccessfulPayment({ appointment, payment, io });
+      // Convert resultCode to string for comparison (handles both "0" and 0)
+      const resultCodeStr = String(statusResult.resultCode);
+      
+      if (resultCodeStr === "0") {
+        // Success - update payment and appointment if not already SUCCESS
+        if (payment.status !== "SUCCESS") {
+          if (payment.appointmentId) {
+            const appointment = await Appointment.findById(payment.appointmentId);
+            if (appointment) {
+              await applySuccessfulPayment({ appointment, payment, io });
+            }
+          } else {
+            await applySuccessfulPayment({ appointment: null, payment, io });
           }
-        } else {
-          await applySuccessfulPayment({ appointment: null, payment, io });
         }
       } else {
-        // Failure (codes like 1032, 1, etc.)
-        payment.status = "FAILED";
-        await payment.save();
-        io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+        // Failure (codes like "1032", "1", etc.) - only update if still PENDING
+        if (payment.status === "PENDING") {
+          payment.status = "FAILED";
+          await payment.save();
+          io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+        }
       }
     }
 

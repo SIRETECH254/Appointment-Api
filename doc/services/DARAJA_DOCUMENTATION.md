@@ -186,7 +186,8 @@ export const parseCallback = (body: any): CallbackParseResult => {
   if (!stk) return { valid: false, success: false };
 
   const resultCode = stk.ResultCode;
-  const success = resultCode === 0;
+  // Handle resultCode as string or number (Daraja may return "0" or 0)
+  const success = String(resultCode) === "0";
   const checkoutRequestId = stk.CheckoutRequestID;
 
   let amount: number | undefined;

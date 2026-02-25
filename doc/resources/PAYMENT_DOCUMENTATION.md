@@ -516,9 +516,10 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
 **Process:**
 - Find payment by checkoutRequestId in processorRefs
 - Query Daraja API for current STK push status
-- **Proactive Update:** If the internal payment status is `PENDING` and a definitive result is returned from Daraja:
-    - If `resultCode` is 0 (Success), calls `applySuccessfulPayment()` to update payment/appointment.
-    - If `resultCode` is non-zero (e.g., Cancelled, Insufficient Funds), marks payment as `FAILED`.
+- **Proactive Update:** If a definitive result is returned from Daraja:
+    - If `resultCode` is `"0"` (Success, as string), calls `applySuccessfulPayment()` to update payment/appointment (even if payment was previously marked as `FAILED`).
+    - If `resultCode` is non-zero string (e.g., `"1032"`, `"1"`), marks payment as `FAILED` (only if payment status is still `PENDING`).
+- **Note:** `resultCode` from Daraja API is returned as a string (e.g., `"0"` for success), so the code converts it to string for comparison.
 - Return payment details along with status query result
 **Response:** Payment details and Daraja status response
 
@@ -545,24 +546,31 @@ export const checkPaymentStatus = async (req: Request, res: Response, next: Next
     // Query Daraja API for STK push status
     const statusResult = await queryStkPushStatus({ checkoutRequestId });
 
-    // Proactively update payment if it's pending and we have a definitive result
-    if (payment.status === "PENDING" && statusResult.ok && statusResult.resultCode !== undefined) {
+    // Proactively update payment if we have a definitive result from Daraja
+    if (statusResult.ok && statusResult.resultCode !== undefined) {
       const io = req.app.get("io");
-      if (statusResult.resultCode === 0) {
-        // Success
-        if (payment.appointmentId) {
-          const appointment = await Appointment.findById(payment.appointmentId);
-          if (appointment) {
-            await applySuccessfulPayment({ appointment, payment, io });
+      // Convert resultCode to string for comparison (handles both "0" and 0)
+      const resultCodeStr = String(statusResult.resultCode);
+      
+      if (resultCodeStr === "0") {
+        // Success - update payment and appointment if not already SUCCESS
+        if (payment.status !== "SUCCESS") {
+          if (payment.appointmentId) {
+            const appointment = await Appointment.findById(payment.appointmentId);
+            if (appointment) {
+              await applySuccessfulPayment({ appointment, payment, io });
+            }
+          } else {
+            await applySuccessfulPayment({ appointment: null, payment, io });
           }
-        } else {
-          await applySuccessfulPayment({ appointment: null, payment, io });
         }
       } else {
-        // Failure (codes like 1032, 1, etc.)
-        payment.status = "FAILED";
-        await payment.save();
-        io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+        // Failure (codes like "1032", "1", etc.) - only update if still PENDING
+        if (payment.status === "PENDING") {
+          payment.status = "FAILED";
+          await payment.save();
+          io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+        }
       }
     }
 
@@ -1008,7 +1016,8 @@ export const parseCallback = (body: any): CallbackParseResult => {
   if (!stk) return { valid: false, success: false };
 
   const resultCode = stk.ResultCode;
-  const success = resultCode === 0;
+  // Handle resultCode as string or number (Daraja may return "0" or 0)
+  const success = String(resultCode) === "0";
   const checkoutRequestId = stk.CheckoutRequestID;
 
   let amount: number | undefined;
@@ -1043,7 +1052,7 @@ export const parseCallback = (body: any): CallbackParseResult => {
 **Access:** Internal service  
 **Validation:** CheckoutRequestID required  
 **Process:** Call Daraja query endpoint  
-**Response:** Status details
+**Response:** Status details with `resultCode` (may be returned as string `"0"` for success or number `0`, so code should handle both)
 
 **Service Implementation:**
 ```typescript
