@@ -206,3 +206,17 @@ export interface INotification extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface INewsletter extends Document {
+  _id: Types.ObjectId;
+  email: string;
+  userId?: Types.ObjectId | null;
+  status: "SUBSCRIBED" | "UNSUBSCRIBED" | "BOUNCED";
+  subscribedAt: Date;
+  unsubscribedAt?: Date;
+  unsubscribeToken?: string;
+  source: "WEBSITE" | "ADMIN" | "API" | "IMPORT";
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}

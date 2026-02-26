@@ -18,6 +18,7 @@ import breakRoutes from "./routes/breakRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import contactRoutes from "./routes/contactRoutes";
+import newsletterRoutes from "./routes/newsletterRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
 
 const app = express();
@@ -130,6 +131,8 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.use("/api/contact", contactRoutes);
+
+app.use("/api/newsletter", newsletterRoutes);
 
 app.use("/api/dashboard", dashboardRoutes);
 
