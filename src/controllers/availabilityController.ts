@@ -155,8 +155,8 @@ export const getAvailableSlots = async (
       endTime: { $gt: start }
     }).select("startTime endTime");
 
-    // Fetch all breaks for the staff (time-only strings)
-    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime");
+    // Fetch all breaks for the staff (time-only strings) - include reason
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime reason");
     
     // Convert break time strings to date-time ranges for this specific date
     const breakEvents: TimeRange[] = breaks
@@ -177,6 +177,31 @@ export const getAvailableSlots = async (
         return isWithinHours ? { start: breakStart, end: breakEnd } : null;
       })
       .filter((event): event is TimeRange => event !== null);
+
+    // Store break info with reason for response
+    const breakInfo = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        if (!isWithinHours) return null;
+        
+        return {
+          start: breakStart,
+          end: breakEnd,
+          reason: breakItem.reason
+        };
+      })
+      .filter((breakItem): breakItem is { start: Date; end: Date; reason: string | undefined } => breakItem !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
@@ -199,13 +224,25 @@ export const getAvailableSlots = async (
       return;
     }
 
+    // Combine slots and breaks, then sort by startTime
+    const timeline = [
+      ...filteredSlots.map((slot) => ({
+        type: "available" as const,
+        startTime: slot.start,
+        endTime: slot.end
+      })),
+      ...breakInfo.map((breakItem) => ({
+        type: "break" as const,
+        startTime: breakItem.start,
+        endTime: breakItem.end,
+        reason: breakItem.reason
+      }))
+    ].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
     res.status(200).json({
       success: true,
       data: {
-        slots: filteredSlots.map((slot) => ({
-          startTime: slot.start,
-          endTime: slot.end
-        }))
+        slots: timeline
       }
     });
   } catch (error: any) {
