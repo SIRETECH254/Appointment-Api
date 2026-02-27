@@ -220,3 +220,14 @@ export interface INewsletter extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface IReview extends Document {
+  _id: Types.ObjectId;
+  userId: Types.ObjectId;
+  appointmentId: Types.ObjectId;
+  rating: number; // 1-5
+  comment?: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  createdAt: Date;
+  updatedAt: Date;
+}
