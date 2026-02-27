@@ -110,6 +110,7 @@ export const checkSlotAvailability = async (
   params: SlotAvailabilityParams
 ): Promise<SlotAvailabilityResult> => {
   const { staffId, serviceIds, startTime, endTime, excludeAppointmentId } = params;
+  const bufferMinutes = 10; // 10-minute surge time after each slot
 
   const staff = await User.findById(staffId).select("workingHours services");
   if (!staff) {
@@ -132,6 +133,29 @@ export const checkSlotAvailability = async (
   if (!isWithinWorkingHours(workingRanges, startTime, endTime)) {
     return { ok: false, message: "Appointment time is outside working hours" };
   }
+
+  // Check if slot + buffer fits within working hours
+  const slotWithBuffer = new Date(endTime.getTime() + bufferMinutes * 60 * 1000);
+  let bufferFitsInWorkingHours = false;
+  for (const range of workingRanges) {
+    const dateOnlyUTC = new Date(startTime);
+    dateOnlyUTC.setUTCHours(0, 0, 0, 0);
+    dateOnlyUTC.setUTCHours(dateOnlyUTC.getUTCHours() - NAIROBI_TZ_OFFSET_HOURS);
+    
+    const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+    const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+    if (!rangeStart || !rangeEnd) continue;
+    
+    if (slotWithBuffer.getTime() <= rangeEnd.getTime() && endTime.getTime() >= rangeStart.getTime()) {
+      bufferFitsInWorkingHours = true;
+      break;
+    }
+  }
+  
+  if (!bufferFitsInWorkingHours) {
+    return { ok: false, message: "Appointment time does not allow for required buffer time" };
+  }
+
   const appointmentQuery: any = {
     staffId,
     startTime: { $lt: endTime },
@@ -182,6 +206,13 @@ export const checkSlotAvailability = async (
   const hasOverlap = events.some((event) => overlaps({ start: startTime, end: endTime }, event));
   if (hasOverlap) {
     return { ok: false, message: "Appointment time is not available" };
+  }
+
+  // Check if buffer time overlaps with any appointments or breaks
+  const bufferTimeRange = { start: endTime, end: slotWithBuffer };
+  const bufferOverlaps = events.some((event) => overlaps(bufferTimeRange, event));
+  if (bufferOverlaps) {
+    return { ok: false, message: "Required buffer time after appointment is not available" };
   }
 
   return { ok: true };
