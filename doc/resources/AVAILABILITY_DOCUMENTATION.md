@@ -35,12 +35,14 @@ This section explains the core slot logic only.
 
 ### What a Slot Is
 - A slot is not stored in the database.
-- A slot is a calculated start time where a service can fit inside a staff member’s working hours without overlapping an existing appointment or break.
+- A slot is a calculated start time where a service can fit inside a staff member's working hours without overlapping an existing appointment or break.
+- Each slot includes a 10-minute buffer (surge time) after the service duration to allow for cleanup and preparation.
 
 ### Data Used for Slot Calculation
-Only four inputs are required:
+Only five inputs are required:
 - Staff working hours (e.g. 09:00–20:00)
 - Service duration (e.g. 50 minutes)
+- Buffer time (10 minutes surge time after each slot)
 - Existing appointments for the staff on the selected date
 - Breaks for the staff (time-only, recurring daily)
 
@@ -51,11 +53,18 @@ Only four inputs are required:
 4. Convert break time strings to date-time ranges for the specific date being checked.
 5. Filter breaks to only include those that overlap with working hours for that day.
 6. Starting from the work start time, generate time ranges using the service duration.
-7. For each generated slot, check if it overlaps any appointment or converted break.
-8. Remove overlapping slots.
-9. Return the remaining slots as available.
+7. For each generated slot, check if it (including the 10-minute buffer) fits within working hours.
+8. For each generated slot, check if it overlaps any appointment or converted break.
+9. Remove overlapping slots.
+10. Move to the next potential slot start time (current slot end + 10-minute buffer).
+11. Return the remaining slots as available.
 
 **Note:** Breaks are recurring daily time ranges (e.g., "13:00" to "14:00") that automatically apply to every day when the staff has working hours. They are converted to specific date-time ranges during availability calculation.
+
+**Buffer Time:** A 10-minute surge time is automatically added after each slot. This buffer time:
+- Is not bookable
+- Ensures there's time for cleanup and preparation between appointments
+- Must fit within working hours for a slot to be available
 
 ### Overlap Rule
 A slot overlaps an appointment (or break) if:
@@ -71,6 +80,7 @@ If this condition is true, the slot is invalid.
 ### Example
 Working hours: 09:00 – 20:00  
 Service duration: 50 minutes  
+Buffer time: 10 minutes (after each slot)  
 Existing appointments:
 - 10:00 – 10:50
 - 13:30 – 14:20
@@ -81,7 +91,16 @@ Breaks (recurring daily):
 
 For a specific date (e.g., 2026-01-23), the break "13:00 – 14:00" is converted to "2026-01-23T13:00:00.000Z – 2026-01-23T14:00:00.000Z" and blocks slots during that time.
 
-Available slots are all generated 50-minute time ranges that do not overlap the appointments or the converted break.
+Available slots are all generated 50-minute time ranges that do not overlap the appointments or the converted break, with a 10-minute buffer after each slot.
+
+**Example slot sequence:**
+- Slot 1: 09:00 – 09:50 (50 min service)
+- Buffer: 09:50 – 10:00 (10 min surge - not bookable)
+- Slot 2: 10:00 – 10:50 (blocked by appointment)
+- Buffer: 10:50 – 11:00 (10 min surge - not bookable)
+- Slot 3: 11:00 – 11:50 (50 min service)
+- Buffer: 11:50 – 12:00 (10 min surge - not bookable)
+- ... and so on
 
 ### Where This Logic Runs
 Responsibility | Location
@@ -104,6 +123,7 @@ Slots are not persisted; there is no Availability model.
 Availability uses:
 - `User.workingHours` for staff schedules
 - `Service.duration` for slot length (summed when multiple services are requested)
+- Buffer time (10 minutes surge time after each slot)
 - `Appointment` records for booked time
 - `Break` records for recurring daily staff downtime (stored as time-only strings, e.g., "13:00" to "14:00")
 
@@ -258,7 +278,7 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
       ...breakEvents
     ];
 
-    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events);
+    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events, 10);
     const nowUTC = new Date();
     const filteredSlots =
       dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
@@ -428,7 +448,8 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
       workingRanges,
       dateOnlyUTC,
       totalDuration,
-      events
+      events,
+      10
     );
 
     const nowUTC = new Date();
@@ -592,6 +613,10 @@ Common responses:
 - `"No working hours for this day"` when staff has no hours
 - `"No services assigned to staff"` when staff has no services
 - `"Staff does not provide requested services"` when a requested service is not assigned
+
+**Booking Validation Messages (from `checkSlotAvailability`):**
+- `"Appointment time does not allow for required buffer time"` when slot + 10-minute buffer doesn't fit within working hours
+- `"Required buffer time after appointment is not available"` when the 10-minute buffer conflicts with other appointments or breaks
 
 ---
 

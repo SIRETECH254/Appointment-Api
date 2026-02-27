@@ -126,7 +126,8 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
       return next(errorHandler(400, "Invalid breakId"));
     }
 
-    const existing = await BreakModel.findById(breakId);
+    const existing = await BreakModel.findById(breakId)
+      .populate("staffId", "firstName lastName email phone");
     if (!existing) {
       return next(errorHandler(404, "Break not found"));
     }

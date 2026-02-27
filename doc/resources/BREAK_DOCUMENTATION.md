@@ -245,14 +245,15 @@ export const getBreaks = async (req: Request, res: Response, next: NextFunction)
 #### `getBreak()`
 **Purpose:** Get a break by id  
 **Access:** Admin  
-**Response:** Break record
+**Response:** Break record with populated staff information
 
 **Controller Implementation:**
 ```typescript
 export const getBreak = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { breakId } = req.params;
-    const existing = await BreakModel.findById(breakId);
+    const existing = await BreakModel.findById(breakId)
+      .populate("staffId", "firstName lastName email phone");
 
     if (!existing) {
       return next(errorHandler(404, "Break not found"));
@@ -263,6 +264,7 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
       data: { break: existing }
     });
   } catch (error: any) {
+    console.error("Get break error:", error);
     next(errorHandler(500, "Server error while fetching break"));
   }
 };
