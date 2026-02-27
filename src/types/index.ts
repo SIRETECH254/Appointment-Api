@@ -62,8 +62,8 @@ export interface IPayment extends Document {
 export interface IBreak extends Document {
   _id: Types.ObjectId;
   staffId: Types.ObjectId;
-  startTime: Date;
-  endTime: Date;
+  startTime: string; // HH:MM format
+  endTime: string; // HH:MM format
   reason?: string;
   createdAt: Date;
 }

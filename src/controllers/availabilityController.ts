@@ -155,15 +155,32 @@ export const getAvailableSlots = async (
       endTime: { $gt: start }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    // Fetch all breaks for the staff (time-only strings)
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime");
+    
+    // Convert break time strings to date-time ranges for this specific date
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          // Check if break overlaps with any working hour range
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
     const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events);
@@ -291,15 +308,32 @@ export const getDayAvailability = async (
       endTime: { $gt: start }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    // Fetch all breaks for the staff (time-only strings)
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime");
+    
+    // Convert break time strings to date-time ranges for this specific date
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          // Check if break overlaps with any working hour range
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
     const { totalSlots, availableSlots } = computeSlots(

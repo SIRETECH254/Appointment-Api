@@ -15,12 +15,14 @@
 
 ## Break Overview
 
-Breaks represent time ranges when a staff member is not available for appointments.  
-Breaks are stored in the database and are used by availability to remove slots.
+Breaks represent recurring daily time ranges when a staff member is not available for appointments.  
+Breaks are stored as time-only strings (HH:MM format) and automatically apply to every day the staff has working hours.
 
 Integration with Availability:
-- Breaks are pulled during slot calculation.
-- Any slot overlapping a break is removed from availability.
+- Breaks are stored as time strings (e.g., "13:00" to "14:00")
+- During availability calculation, breaks are converted to date-time ranges for the specific day being checked
+- Any slot overlapping a break is removed from availability
+- Breaks only apply on days when the staff has working hours
 
 ---
 
@@ -31,8 +33,8 @@ Integration with Availability:
 interface IBreak {
   _id: ObjectId;
   staffId: ObjectId;
-  startTime: Date;
-  endTime: Date;
+  startTime: string; // HH:MM format (e.g., "13:00")
+  endTime: string;   // HH:MM format (e.g., "14:00")
   reason?: string;
   createdAt: Date;
 }
@@ -46,17 +48,47 @@ interface IBreak {
 import mongoose, { Schema } from "mongoose";
 import type { IBreak } from "../types/index";
 
+// Validation function for HH:MM format
+const validateTimeFormat = (time: string): boolean => {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+};
+
 const breakSchema = new Schema<IBreak>(
   {
     staffId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    startTime: { type: Date, required: true },
-    endTime: { type: Date, required: true },
+    startTime: { 
+      type: String, 
+      required: true,
+      validate: {
+        validator: validateTimeFormat,
+        message: "Start time must be in HH:MM format (00:00 to 23:59)"
+      }
+    },
+    endTime: { 
+      type: String, 
+      required: true,
+      validate: {
+        validator: validateTimeFormat,
+        message: "End time must be in HH:MM format (00:00 to 23:59)"
+      }
+    },
     reason: { type: String, trim: true, maxlength: 300 }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
 
-breakSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
+// Validate that startTime < endTime
+breakSchema.pre("save", function (next) {
+  if (this.startTime && this.endTime) {
+    if (this.startTime >= this.endTime) {
+      return next(new Error("startTime must be earlier than endTime"));
+    }
+  }
+  next();
+});
+
+// Index on staffId only
+breakSchema.index({ staffId: 1 });
 
 const Break = mongoose.model<IBreak>("Break", breakSchema);
 export default Break;
@@ -65,10 +97,11 @@ export default Break;
 ### Validation Rules
 ```typescript
 staffId:   { required: true }
-startTime: { required: true }
-endTime:   { required: true }
+startTime: { required: true, format: HH:MM (00:00 to 23:59) }
+endTime:   { required: true, format: HH:MM (00:00 to 23:59) }
 reason:    { optional, maxlength: 300 }
 ```
+**Note:** `startTime` must be earlier than `endTime` (string comparison).
 
 ---
 
@@ -85,9 +118,9 @@ import User from "../models/User";
 ### Functions Overview
 
 #### `createBreak()`
-**Purpose:** Create a break for a staff member  
+**Purpose:** Create a recurring daily break for a staff member  
 **Access:** Admin  
-**Validation:** `staffId`, `date` (YYYY-MM-DD), `startTime` (HH:MM), `endTime` (HH:MM) required. `startTime < endTime`. Break cannot be in the past.  
+**Validation:** `staffId`, `startTime` (HH:MM format string), `endTime` (HH:MM format string) required. `startTime < endTime`. Break applies to all days when staff has working hours.  
 **Response:** Created break
 
 **Controller Implementation:**
@@ -100,15 +133,35 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
       return next(errorHandler(400, "staffId, startTime and endTime are required"));
     }
 
-    const staff = await User.findById(staffId).select("_id");
+    const staffIdStr = String(staffId);
+    if (!isValidObjectId(staffIdStr)) {
+      return next(errorHandler(400, "Invalid staffId"));
+    }
+
+    const startTimeStr = String(startTime).trim();
+    const endTimeStr = String(endTime).trim();
+
+    if (!validateTimeFormat(startTimeStr)) {
+      return next(errorHandler(400, "Invalid startTime format. Use HH:MM format (e.g., 13:00)"));
+    }
+
+    if (!validateTimeFormat(endTimeStr)) {
+      return next(errorHandler(400, "Invalid endTime format. Use HH:MM format (e.g., 14:00)"));
+    }
+
+    if (startTimeStr >= endTimeStr) {
+      return next(errorHandler(400, "startTime must be earlier than endTime"));
+    }
+
+    const staff = await User.findById(staffIdStr).select("_id");
     if (!staff) {
       return next(errorHandler(404, "Staff not found"));
     }
 
     const newBreak = new BreakModel({
-      staffId,
-      startTime,
-      endTime,
+      staffId: staffIdStr,
+      startTime: startTimeStr,
+      endTime: endTimeStr,
       reason: typeof reason === "string" ? reason.trim() : undefined
     });
 
@@ -120,6 +173,10 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
       data: { break: newBreak }
     });
   } catch (error: any) {
+    console.error("Create break error:", error);
+    if (error.message && error.message.includes("startTime must be earlier")) {
+      return next(errorHandler(400, error.message));
+    }
     next(errorHandler(500, "Server error while creating break"));
   }
 };
@@ -128,15 +185,17 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
 #### `getBreaks()`
 **Purpose:** List breaks (optional filters)  
 **Access:** Admin  
-**Query:** `staffId`, `date`, `from`, `to`, `page`, `limit`  
+**Query:** `staffId`, `page`, `limit`  
 **Pagination:** `page`, `limit` (default: page=1, limit=10)  
 **Response:** Break list with populated staff information and pagination
+
+**Note:** Breaks are time-only and apply to all days, so date filtering is not available.
 
 **Controller Implementation:**
 ```typescript
 export const getBreaks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { staffId, date, from, to, page = 1, limit = 10 } = req.query;
+    const { staffId, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (staffId) {
@@ -145,30 +204,6 @@ export const getBreaks = async (req: Request, res: Response, next: NextFunction)
         return next(errorHandler(400, "Invalid staffId"));
       }
       query.staffId = staffIdStr;
-    }
-
-    if (date) {
-      const dateOnly = parseDateOnly(String(date));
-      if (!dateOnly) {
-        return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
-      }
-      const { start, end } = buildDayRange(dateOnly);
-      query.startTime = { $lt: end };
-      query.endTime = { $gt: start };
-    } else if (from || to) {
-      const fromDate = from ? parseDate(String(from)) : null;
-      const toDate = to ? parseDate(String(to)) : null;
-      if ((from && !fromDate) || (to && !toDate)) {
-        return next(errorHandler(400, "Invalid from or to date"));
-      }
-      if (fromDate && toDate) {
-        query.startTime = { $lt: toDate };
-        query.endTime = { $gt: fromDate };
-      } else if (fromDate) {
-        query.endTime = { $gt: fromDate };
-      } else if (toDate) {
-        query.startTime = { $lt: toDate };
-      }
     }
 
     // Pagination options
@@ -236,7 +271,7 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
 #### `updateBreak()`
 **Purpose:** Update break fields  
 **Access:** Admin  
-**Validation:** `breakId` required. `staffId`, `date` (YYYY-MM-DD), `startTime` (HH:MM), `endTime` (HH:MM) are optional update fields. `startTime < endTime`. Break cannot be in the past.  
+**Validation:** `breakId` required. `staffId`, `startTime` (HH:MM format string), `endTime` (HH:MM format string) are optional update fields. `startTime < endTime`.  
 **Response:** Updated break
 
 **Controller Implementation:**
@@ -244,7 +279,7 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
 export const updateBreak = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const breakIdParam = req.params.breakId;
-    const { staffId, date, startTime: timeStart, endTime: timeEnd, reason } = req.body;
+    const { staffId, startTime, endTime, reason } = req.body;
 
     if (!breakIdParam) {
       return next(errorHandler(400, "breakId is required"));
@@ -259,18 +294,6 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       return next(errorHandler(404, "Break not found"));
     }
 
-    let updatedStartTime = existing.startTime;
-    let updatedEndTime = existing.endTime;
-    let baseDateForTimes = existing.startTime; // Start with existing break's date part (which is UTC)
-
-    if (date !== undefined) {
-        const newDateUTC = parseNairobiDateToUTC(date);
-        if (!newDateUTC) {
-            return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
-        }
-        baseDateForTimes = newDateUTC;
-    }
-
     if (staffId !== undefined) {
       const staffIdStr = String(staffId);
       if (!isValidObjectId(staffIdStr)) {
@@ -283,50 +306,25 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       existing.staffId = staff._id;
     }
 
-    if (timeStart !== undefined) {
-        const newStart = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeStart);
-        if (!newStart) {
-            return next(errorHandler(400, "Invalid startTime format. Use HH:MM"));
-        }
-        updatedStartTime = newStart;
-    } else if (date !== undefined) {
-        const existingStartHour = existing.startTime.getUTCHours() + 3; // EAT offset
-        const existingStartMinute = existing.startTime.getUTCMinutes();
-        const existingTimeStr = `${String(existingStartHour % 24).padStart(2, '0')}:${String(existingStartMinute).padStart(2, '0')}`;
-        
-        updatedStartTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
-        if (!updatedStartTime) {
-            return next(errorHandler(500, "Failed to reconstruct startTime with new date"));
-        }
+    if (startTime !== undefined) {
+      const startTimeStr = String(startTime).trim();
+      if (!validateTimeFormat(startTimeStr)) {
+        return next(errorHandler(400, "Invalid startTime format. Use HH:MM format (e.g., 13:00)"));
+      }
+      existing.startTime = startTimeStr;
     }
 
-    if (timeEnd !== undefined) {
-        const newEnd = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeEnd);
-        if (!newEnd) {
-            return next(errorHandler(400, "Invalid endTime format. Use HH:MM"));
-        }
-        updatedEndTime = newEnd;
-    } else if (date !== undefined) {
-        const existingEndHour = existing.endTime.getUTCHours() + 3; // EAT offset
-        const existingEndMinute = existing.endTime.getUTCMinutes();
-        const existingTimeStr = `${String(existingEndHour % 24).padStart(2, '0')}:${String(existingEndMinute).padStart(2, '0')}`;
-
-        updatedEndTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
-        if (!updatedEndTime) {
-            return next(errorHandler(500, "Failed to reconstruct endTime with new date"));
-        }
+    if (endTime !== undefined) {
+      const endTimeStr = String(endTime).trim();
+      if (!validateTimeFormat(endTimeStr)) {
+        return next(errorHandler(400, "Invalid endTime format. Use HH:MM format (e.g., 14:00)"));
+      }
+      existing.endTime = endTimeStr;
     }
-    
-    existing.startTime = updatedStartTime;
-    existing.endTime = updatedEndTime;
 
-    if (existing.startTime.getTime() >= existing.endTime.getTime()) {
+    // Validate startTime < endTime (using string comparison)
+    if (existing.startTime >= existing.endTime) {
       return next(errorHandler(400, "startTime must be earlier than endTime"));
-    }
-
-    const nowUTC = new Date();
-    if (existing.endTime.getTime() <= nowUTC.getTime()) {
-        return next(errorHandler(400, "Cannot update a break to be in the past"));
     }
 
     if (reason !== undefined) {
@@ -346,6 +344,9 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
     });
   } catch (error: any) {
     console.error("Update break error:", error);
+    if (error.message && error.message.includes("startTime must be earlier")) {
+      return next(errorHandler(400, error.message));
+    }
     next(errorHandler(500, "Server error while updating break"));
   }
 };
@@ -423,7 +424,7 @@ export default router;
 
 #### `GET /api/breaks`
 **Headers:** `Authorization: Bearer <admin_token>`  
-**Query (optional):** `staffId`, `date`, `from`, `to`, `page`, `limit`  
+**Query (optional):** `staffId`, `page`, `limit`  
 **Response:**
 ```json
 {
@@ -439,8 +440,8 @@ export default router;
           "email": "john@example.com",
           "phone": "+254712345679"
         },
-        "startTime": "2026-01-25T12:00:00.000Z",
-        "endTime": "2026-01-25T13:00:00.000Z",
+        "startTime": "13:00",
+        "endTime": "14:00",
         "reason": "Lunch break"
       }
     ],
@@ -454,7 +455,7 @@ export default router;
   }
 }
 ```
-**Note:** The `staffId` field is populated with full staff details (firstName, lastName, email, phone).
+**Note:** The `staffId` field is populated with full staff details (firstName, lastName, email, phone). Breaks are stored as time strings and apply to all days.
 
 #### `GET /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  
@@ -466,8 +467,8 @@ export default router;
     "break": {
       "_id": "...",
       "staffId": "...",
-      "startTime": "2026-01-23T12:00:00.000Z",
-      "endTime": "2026-01-23T12:30:00.000Z"
+      "startTime": "13:00",
+      "endTime": "14:00"
     }
   }
 }
@@ -476,18 +477,17 @@ export default router;
 #### `POST /api/breaks`
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body:**
-\`\`\`json
+```json
 {
   "staffId": "<staffId>",
-  "date": "2026-01-23",
-  "startTime": "12:00",
-  "endTime": "12:30",
+  "startTime": "13:00",
+  "endTime": "14:00",
   "reason": "Lunch"
 }
-\`\`\`
-**(Note: 'date', 'startTime', and 'endTime' are interpreted in Africa/Nairobi timezone and combined to form UTC `Date` objects for storage.)**
+```
+**(Note: `startTime` and `endTime` must be in HH:MM format (e.g., "13:00", "14:00"). The break will apply to all days when the staff has working hours.)**
 **Response:**
-\`\`\`json
+```json
 {
   "success": true,
   "message": "Break created successfully",
@@ -495,28 +495,27 @@ export default router;
     "break": {
       "_id": "...",
       "staffId": "...",
-      "startTime": "2026-01-23T09:00:00.000Z",
-      "endTime": "2026-01-23T10:00:00.000Z"
+      "startTime": "13:00",
+      "endTime": "14:00",
+      "reason": "Lunch"
     }
   }
 }
-\`\`\`
-*(Note: Response `startTime` and `endTime` are UTC, which might differ from the local times sent in the request due to timezone conversion.)*
+```
 
 #### `PUT /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body:**
-\`\`\`json
+```json
 {
-  "date": "2026-01-23",
   "startTime": "13:00",
-  "endTime": "13:30",
+  "endTime": "14:00",
   "reason": "Updated reason"
 }
-\`\`\`
-**(Note: 'date', 'startTime', and 'endTime' are interpreted in Africa/Nairobi timezone and combined to form UTC `Date` objects for storage.)**
+```
+**(Note: `startTime` and `endTime` must be in HH:MM format. All fields are optional except `breakId` in the URL.)**
 **Response:**
-\`\`\`json
+```json
 {
   "success": true,
   "message": "Break updated successfully",
@@ -524,13 +523,13 @@ export default router;
     "break": {
       "_id": "...",
       "staffId": "...",
-      "startTime": "2026-01-23T10:00:00.000Z",
-      "endTime": "2026-01-23T10:30:00.000Z"
+      "startTime": "13:00",
+      "endTime": "14:00",
+      "reason": "Updated reason"
     }
   }
 }
-\`\`\`
-*(Note: Response `startTime` and `endTime` are UTC, which might differ from the local times sent in the request due to timezone conversion.)*
+```
 
 #### `DELETE /api/breaks/:breakId`
 **Headers:** `Authorization: Bearer <admin_token>`  
@@ -573,15 +572,15 @@ curl -X POST http://localhost:4500/api/breaks \
   -H "Authorization: Bearer <admin_token>" \
   -d '{
     "staffId": "<staffId>",
-    "startTime": "2026-01-23T12:00:00.000Z",
-    "endTime": "2026-01-23T12:30:00.000Z",
+    "startTime": "13:00",
+    "endTime": "14:00",
     "reason": "Lunch"
   }'
 ```
 
 ### List Breaks
 ```bash
-curl -X GET "http://localhost:4500/api/breaks?staffId=<staffId>&date=2026-01-23" \
+curl -X GET "http://localhost:4500/api/breaks?staffId=<staffId>" \
   -H "Authorization: Bearer <admin_token>"
 ```
 
@@ -609,8 +608,10 @@ Common responses:
 ## 📊 Database Indexes
 
 ```typescript
-breakSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
+breakSchema.index({ staffId: 1 });
 ```
+
+**Note:** Only `staffId` is indexed since breaks are now time-only strings and don't require date-range queries.
 
 ---
 

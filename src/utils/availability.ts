@@ -143,15 +143,40 @@ export const checkSlotAvailability = async (
   }
 
   const conflictingAppointments = await Appointment.find(appointmentQuery).select("startTime endTime");
-  const breaks = await BreakModel.find({
-    staffId,
-    startTime: { $lt: endTime },
-    endTime: { $gt: startTime }
-  }).select("startTime endTime");
+  
+  // Fetch all breaks for the staff (time-only strings)
+  const breaks = await BreakModel.find({ staffId }).select("startTime endTime");
+  
+  // Get the base date from startTime (representing the day in Nairobi timezone)
+  // We need to extract the date part to combine with break times
+  const dateOnlyUTC = new Date(startTime);
+  dateOnlyUTC.setUTCHours(0, 0, 0, 0);
+  // Adjust to Nairobi midnight
+  dateOnlyUTC.setUTCHours(dateOnlyUTC.getUTCHours() - NAIROBI_TZ_OFFSET_HOURS);
+  
+  // Convert break time strings to date-time ranges for this specific day
+  const breakEvents: TimeRange[] = breaks
+    .map((breakItem) => {
+      const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+      const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+      if (!breakStart || !breakEnd) return null;
+      
+      // Only include breaks that overlap with working hours for this day
+      const overlapsWithWorkingHours = workingRanges.some((range) => {
+        const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+        const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+        if (!rangeStart || !rangeEnd) return false;
+        // Check if break overlaps with any working hour range
+        return breakStart < rangeEnd && breakEnd > rangeStart;
+      });
+      
+      return overlapsWithWorkingHours ? { start: breakStart, end: breakEnd } : null;
+    })
+    .filter((event): event is TimeRange => event !== null);
 
   const events: TimeRange[] = [
     ...conflictingAppointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-    ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+    ...breakEvents
   ];
 
   const hasOverlap = events.some((event) => overlaps({ start: startTime, end: endTime }, event));
