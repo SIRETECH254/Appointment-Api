@@ -72,6 +72,7 @@ export const getAdminDashboard = async (req: Request, res: Response, next: NextF
             .limit(10);
 
         const recentPayments = await Payment.find()
+            .populate('customerId', 'firstName lastName email phone')
             .populate('appointmentId')
             .sort({ createdAt: 'desc' })
             .limit(10);
@@ -182,6 +183,7 @@ export const getClientDashboard = async (req: Request, res: Response, next: Next
         const recentPayments = await Payment.find({
             appointmentId: { $in: appointmentIds }
         })
+            .populate('customerId', 'firstName lastName email phone')
             .populate('appointmentId')
             .sort({ createdAt: 'desc' })
             .limit(5);
@@ -237,13 +239,15 @@ export const getRevenueStats = async (req: Request, res: Response, next: NextFun
         const payments = await Payment.find({
             status: 'SUCCESS',
             createdAt: { $gte: start, $lte: end }
-        }).populate({
-            path: 'appointmentId',
-            populate: {
-                path: 'customerId',
-                select: 'firstName lastName email phone'
-            }
-        });
+        })
+            .populate('customerId', 'firstName lastName email phone')
+            .populate({
+                path: 'appointmentId',
+                populate: {
+                    path: 'customerId',
+                    select: 'firstName lastName email phone'
+                }
+            });
 
         // Calculate total revenue
         const totalRevenue = payments.reduce((sum, pay) => sum + pay.amount, 0);
@@ -448,6 +452,7 @@ export const getServiceDemandStats = async (req: Request, res: Response, next: N
 
         // Get service revenue from payments
         const successfulPayments = await Payment.find({ status: 'SUCCESS' })
+            .populate('customerId', 'firstName lastName email phone')
             .populate({
                 path: 'appointmentId',
                 populate: {

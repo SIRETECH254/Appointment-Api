@@ -401,6 +401,7 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
 
     // Query payments with pagination
     const payments = await Payment.find(query)
+      .populate("customerId", "firstName lastName email phone")
       .populate("appointmentId", "startTime status")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
@@ -455,6 +456,7 @@ export const getMyPayments = async (req: Request, res: Response, next: NextFunct
     };
 
     const payments = await Payment.find(query)
+      .populate("customerId", "firstName lastName email phone")
       .populate("appointmentId", "startTime status")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
@@ -490,7 +492,9 @@ export const getMyPayments = async (req: Request, res: Response, next: NextFunct
 export const getPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { paymentId } = req.params;
-    const payment = await Payment.findById(paymentId);
+    const payment = await Payment.findById(paymentId)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("appointmentId");
     if (!payment) return next(errorHandler(404, "Payment not found"));
 
     const roleNames = req.user?.roleNames || [];
@@ -1368,6 +1372,13 @@ export default router;
         "paymentNumber": "PAY-2026-0001",
         "amount": 500,
         "status": "SUCCESS",
+        "customerId": {
+          "_id": "...",
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john@example.com",
+          "phone": "+254712345678"
+        },
         "appointmentId": {
           "_id": "...",
           "startTime": "2026-02-23T10:00:00.000Z",

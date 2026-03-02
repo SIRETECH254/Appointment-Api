@@ -847,6 +847,16 @@ npm start
 }
 ```
 
+### ObjectId Population
+All GET endpoints automatically populate ObjectId references with their related documents. This ensures complete data is returned in API responses:
+
+- **User references** (`userId`, `customerId`, `staffId`, `recipient`) are populated with `firstName`, `lastName`, `email`, and `phone` fields
+- **Appointment references** (`appointmentId`) are populated with appointment details including nested `customerId`, `staffId`, and `services`
+- **Service references** (`services`) are populated with service details (`name`, `duration`, `fullPrice`, etc.)
+- **Role references** (`roles`) are populated with role information (`name`, `displayName`, `description`, `permissions`)
+
+This means when you fetch a payment, contact, notification, or any other resource, all related ObjectId fields will contain the full document data instead of just the ID.
+
 ### Error Response
 ```json
 {
