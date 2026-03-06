@@ -28,7 +28,7 @@ const computeSlots = (
   date: Date, // This 'date' is expected to be a UTC date, corresponding to Nairobi local midnight
   durationMinutes: number,
   events: TimeRange[],
-  bufferMinutes: number = 10 // 10-minute surge time after each slot
+  bufferMinutes: number = 0 // No buffer time after each slot
 ): { totalSlots: number; availableSlots: TimeRange[] } => {
   let totalSlots = 0;
   const availableSlots: TimeRange[] = [];
@@ -213,7 +213,7 @@ export const getAvailableSlots = async (
       ...breakEvents
     ];
 
-    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events, 10);
+    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events, 0);
     const nowUTC = new Date();
     const filteredSlots =
       dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
@@ -383,7 +383,7 @@ export const getDayAvailability = async (
       dateOnlyUTC,
       totalDuration,
       events,
-      10
+      0
     );
 
     const nowUTC = new Date();

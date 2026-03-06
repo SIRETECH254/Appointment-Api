@@ -110,7 +110,7 @@ export const checkSlotAvailability = async (
   params: SlotAvailabilityParams
 ): Promise<SlotAvailabilityResult> => {
   const { staffId, serviceIds, startTime, endTime, excludeAppointmentId } = params;
-  const bufferMinutes = 10; // 10-minute surge time after each slot
+  const bufferMinutes = 0; // No buffer time after each slot
 
   const staff = await User.findById(staffId).select("workingHours services");
   if (!staff) {
