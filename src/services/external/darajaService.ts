@@ -88,9 +88,11 @@ export interface StkPushResponse {
 export const initiateStkPush = async (params: StkPushParams): Promise<StkPushResponse> => {
   const shortCode = process.env.MPESA_SHORT_CODE;
   const passkey = process.env.MPESA_PASSKEY;
-  const callbackUrl = (process.env.CALLBACK_URL || "").trim();
+  const baseUrl = (process.env.CALLBACK_URL || "").trim();
+  const callbackUrl = baseUrl ? `${baseUrl}/api/payments/webhooks/mpesa` : "";
   const partyB = shortCode;
 
+  console.log("Base URL:", baseUrl);
   console.log("Callback URL:", callbackUrl);
 
   if (!shortCode || !passkey) {
@@ -98,7 +100,7 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
   }
 
   if (!callbackUrl) {
-    throw new Error("CALLBACK_URL is not configured");
+    throw new Error("CALLBACK_URL or API_BASE_URL is not configured");
   }
 
   const accessToken = await getAccessToken();
