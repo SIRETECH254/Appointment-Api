@@ -261,6 +261,45 @@ interface INotification {
 
 ---
 
+### 11. Newsletter Model
+```typescript
+interface INewsletter {
+  _id: ObjectId;
+  email: string;
+  userId?: ObjectId | null;
+  status: "SUBSCRIBED" | "UNSUBSCRIBED" | "BOUNCED";
+  subscribedAt: Date;
+  unsubscribedAt?: Date;
+  unsubscribeToken?: string;
+  source: "WEBSITE" | "ADMIN" | "API" | "IMPORT";
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Indexes: `{ email: 1 }` (unique), `{ status: 1 }`, `{ subscribedAt: -1 }`, `{ userId: 1 }` (sparse), `{ unsubscribeToken: 1 }` (unique, sparse).
+
+---
+
+### 12. Review Model
+```typescript
+interface IReview {
+  _id: ObjectId;
+  userId: ObjectId;
+  appointmentId: ObjectId;
+  rating: number; // 1-5
+  comment?: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Indexes: `{ userId: 1 }`, `{ appointmentId: 1 }`, `{ status: 1 }`, `{ createdAt: -1 }`.
+
+---
+
 ## Controllers
 
 ### 1. Auth Controllers
@@ -366,11 +405,14 @@ interface INotification {
 ### 7. Payment Controllers
 
 #### `paymentController.ts`
-- `initiatePayment()` - Start booking fee or full payment
+- `initiatePayment()` - Start service-only payment (no appointment required)
+- `servicePayment()` - Pay remaining amount for an appointment
 - `mpesaWebhook()` - M-Pesa (Daraja) callback handler
 - `paystackWebhook()` - Paystack callback handler
-- `getPayments()` - List payments
+- `getPayments()` - List payments (admin/staff)
+- `getMyPayments()` - Get authenticated user's payment history
 - `getPayment()` - Get single payment
+- `checkPaymentStatus()` - Check M-Pesa STK push payment status
 
 ---
 
@@ -417,6 +459,32 @@ interface INotification {
 - `getContact()` - Get contact by ID (admin)
 - `replyToContact()` - Send reply by email to customer (admin; uses user email if contact has userId, else contact email)
 - `updateContactStatus()` - Update contact status to READ/REPLIED/ARCHIVED (admin)
+
+---
+
+### 12. Newsletter Controllers
+
+#### `newsletterController.ts`
+- `subscribeNewsletter()` - Subscribe to newsletter (public; optional auth attaches userId)
+- `unsubscribeNewsletter()` - Unsubscribe from newsletter (public; via token or email)
+- `getSubscribers()` - List newsletter subscribers (admin)
+- `getSubscriber()` - Get subscriber by ID (admin)
+- `updateSubscriberStatus()` - Update subscriber status (admin)
+- `deleteSubscriber()` - Delete subscriber (admin)
+- `sendNewsletter()` - Send newsletter to subscribers (admin)
+- `getSubscriptionStats()` - Get subscription statistics (admin)
+
+---
+
+### 13. Review Controllers
+
+#### `reviewController.ts`
+- `createReview()` - Create review for completed appointment (authenticated)
+- `getReviews()` - List reviews (public; shows approved by default)
+- `getReview()` - Get review by ID (public)
+- `updateReview()` - Update review (owner or admin)
+- `deleteReview()` - Delete review (owner or admin)
+- `updateReviewStatus()` - Update review status (admin)
 
 ---
 
@@ -552,11 +620,13 @@ GET    /my                        // Customer appointments
 Base: `/api/payments`
 
 ```typescript
-POST   /initiate                  // Initiate payment
-POST   /service-payment           // Service payment
+POST   /initiate                  // Initiate service-only payment
+POST   /service-payment           // Pay remaining amount for appointment
 POST   /webhooks/mpesa            // M-Pesa webhook
 POST   /webhooks/paystack         // Paystack webhook
 GET    /                          // List payments (admin/staff)
+GET    /my-payments               // Get user's payment history
+GET    /status/:checkoutRequestId // Check M-Pesa payment status
 GET    /:paymentId                // Get payment
 ```
 
@@ -581,7 +651,7 @@ POST   /bulk                      // Send bulk notification (admin)
 ---
 
 ### Store Configuration Routes
-Base: `/api/config`
+Base: `/api/store-configuration`
 
 ```typescript
 GET    /                          // Get configuration
@@ -599,6 +669,36 @@ GET    /                    // List contacts (admin)
 GET    /:contactId          // Get contact by id (admin)
 POST   /:contactId/reply    // Send reply by email (admin)
 PATCH  /:contactId/status   // Update contact status (admin)
+```
+
+---
+
+### Newsletter Routes
+Base: `/api/newsletter`
+
+```typescript
+POST   /subscribe                    // Subscribe to newsletter (public; optional auth)
+GET    /unsubscribe                  // Unsubscribe from newsletter (public; via token or email)
+GET    /                             // List subscribers (admin)
+GET    /stats                        // Get subscription statistics (admin)
+GET    /:subscriberId                 // Get subscriber by ID (admin)
+PATCH  /:subscriberId/status          // Update subscriber status (admin)
+DELETE /:subscriberId                // Delete subscriber (admin)
+POST   /send                         // Send newsletter to subscribers (admin)
+```
+
+---
+
+### Review Routes
+Base: `/api/reviews`
+
+```typescript
+POST   /                             // Create review (authenticated)
+GET    /                             // List reviews (public; approved by default)
+GET    /:reviewId                    // Get review by ID (public)
+PUT    /:reviewId                    // Update review (owner or admin)
+DELETE /:reviewId                    // Delete review (owner or admin)
+PATCH  /:reviewId/status             // Update review status (admin)
 ```
 
 ---
@@ -629,7 +729,9 @@ appointment-api/
 │   │   ├── Payment.ts
 │   │   ├── Break.ts
 │   │   ├── Contact.ts
-│   │   └── Notification.ts
+│   │   ├── Notification.ts
+│   │   ├── Newsletter.ts
+│   │   └── Review.ts
 │   ├── controllers/
 │   │   ├── authController.ts
 │   │   ├── roleController.ts
@@ -641,7 +743,9 @@ appointment-api/
 │   │   ├── notificationController.ts
 │   │   ├── storeConfigurationController.ts
 │   │   ├── breakController.ts
-│   │   └── contactController.ts
+│   │   ├── contactController.ts
+│   │   ├── newsletterController.ts
+│   │   └── reviewController.ts
 │   ├── routes/
 │   │   ├── authRoutes.ts
 │   │   ├── roleRoutes.ts
@@ -653,7 +757,9 @@ appointment-api/
 │   │   ├── notificationRoutes.ts
 │   │   ├── storeConfigurationRoutes.ts
 │   │   ├── breakRoutes.ts
-│   │   └── contactRoutes.ts
+│   │   ├── contactRoutes.ts
+│   │   ├── newsletterRoutes.ts
+│   │   └── reviewRoutes.ts
 │   ├── middleware/
 │   │   ├── auth.ts                # JWT auth, optionalAuth, requireAdmin, authorizeRoles
 │   │   └── errorHandler.ts        # Global error handling
