@@ -183,7 +183,11 @@ export const getNotification = async (
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only access your own notifications"));
     }
 
@@ -211,7 +215,11 @@ export const markAsRead = async (
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only mark your own notifications as read"));
     }
 
@@ -266,7 +274,11 @@ export const deleteNotification = async (
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only delete your own notifications"));
     }
 
