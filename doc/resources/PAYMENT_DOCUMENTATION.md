@@ -260,6 +260,10 @@ export const servicePayment = async (req: Request, res: Response, next: NextFunc
 **Purpose:** Handle M-Pesa (Daraja) callback  
 **Access:** Public (signature-verified)  
 **Process:**
+- **Logging:** Extensive console logging for debugging webhook reception and processing
+  - Logs full payload, STK callback structure, and callback metadata
+  - Logs parsed callback results, payment lookup status, and processing steps
+  - Logs success/failure status and error details
 - Emit socket.io event `callback.received` with result description and code if STK callback is present
 - Parse Daraja callback payload
 - Update payment status to `SUCCESS` or `FAILED`
@@ -273,6 +277,13 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     const io = req.app.get("io");
     const payload = req.body;
 
+    // Log the full payload for debugging
+    console.log('===== M-PESA WEBHOOK RECEIVED =====');
+    console.log('Full payload:', JSON.stringify(payload, null, 2));
+    console.log('Body.stkCallback:', JSON.stringify(payload?.Body?.stkCallback, null, 2));
+    console.log('CallbackMetadata:', JSON.stringify(payload?.Body?.stkCallback?.CallbackMetadata, null, 2));
+    console.log('====================================');
+
     if (payload?.Body?.stkCallback) {
       io?.emit("callback.received", {
         message: payload?.Body?.stkCallback.ResultDesc,
@@ -281,18 +292,27 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     }
 
     const parsed = parseCallback(payload);
+    console.log('Parsed callback result:', JSON.stringify(parsed, null, 2));
+    console.log('this is daraja callback');
+    
     if (!parsed.valid || !parsed.checkoutRequestId) {
+      console.log('❌ Invalid payload or missing checkoutRequestId');
       res.status(200).json({ success: false });
       return;
     }
 
+    console.log('🔍 Looking for payment with checkoutRequestId:', parsed.checkoutRequestId);
     const payment = await Payment.findOne({ "processorRefs.daraja.checkoutRequestId": parsed.checkoutRequestId });
     if (!payment) {
+      console.log('❌ Payment not found for checkoutRequestId:', parsed.checkoutRequestId);
       res.status(200).json({ success: false });
       return;
     }
 
+    console.log('✅ Payment found:', payment._id.toString(), 'Status:', payment.status);
+
     if (!parsed.success) {
+      console.log('❌ Payment failed. ResultCode:', payload?.Body?.stkCallback?.ResultCode);
       payment.status = "FAILED";
       await payment.save();
       res.status(200).json({ success: true });
@@ -300,20 +320,30 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     }
 
     payment.transactionRef = parsed.checkoutRequestId;
+    console.log('✅ Payment successful. Processing payment...');
     
     if (payment.appointmentId) {
+      console.log('📅 Payment linked to appointment:', payment.appointmentId);
       const appointment = await Appointment.findById(payment.appointmentId);
       if (!appointment) {
+        console.log('❌ Appointment not found:', payment.appointmentId);
         res.status(200).json({ success: false });
         return;
       }
       await applySuccessfulPayment({ appointment, payment, io });
+      console.log('✅ Payment applied to appointment successfully');
     } else {
+      console.log('💳 Service-only payment (no appointment)');
       await applySuccessfulPayment({ appointment: null, payment, io });
+      console.log('✅ Service payment processed successfully');
     }
     
+    console.log('✅ Webhook processing completed successfully');
     res.status(200).json({ success: true });
   } catch (error: any) {
+    console.error('❌ ERROR in M-Pesa webhook handler:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Request body:', JSON.stringify(req.body, null, 2));
     next(errorHandler(500, "Server error while processing M-Pesa webhook"));
   }
 };
