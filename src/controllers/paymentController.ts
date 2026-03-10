@@ -362,7 +362,12 @@ export const getPayment = async (req: Request, res: Response, next: NextFunction
     const roleNames = req.user?.roleNames || [];
     const isPrivileged = roleNames.includes("admin") || roleNames.includes("staff");
     
-    if (!isPrivileged && (!payment.customerId || payment.customerId.toString() !== req.user?._id.toString())) {
+    // Get the actual customer ID string for comparison, whether populated or not
+    const paymentCustomerId = payment.customerId && (payment.customerId as any)._id 
+      ? (payment.customerId as any)._id.toString() 
+      : payment.customerId?.toString();
+    
+    if (!isPrivileged && (!paymentCustomerId || paymentCustomerId !== req.user?._id.toString())) {
       return next(errorHandler(403, "Access denied"));
     }
 
