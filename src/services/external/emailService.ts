@@ -3,7 +3,7 @@ import { errorHandler } from "../../middleware/errorHandler";
 
 const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
 const smtpUser = process.env.SMTP_USER || "";
-const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_PASS || "";
+const smtpPass = process.env.SMTP_PASS || "";
 const smtpHost = process.env.SMTP_HOST || "";
 const fromEmail = process.env.FROM_EMAIL || "noreply@appointmentapp.com";
 
