@@ -57,6 +57,7 @@
 import express from "express";
 import {
   createAppointment,
+  createAppointmentAdmin,
   confirmAppointment,
   rescheduleAppointment,
   cancelAppointment,
@@ -94,6 +95,51 @@ router.post("/", authenticateToken, authorizeRoles(["customer", "admin"]), creat
  *               - startTime
  *               - endTime
  *             properties:
+ *               staffId:
+ *                 type: string
+ *               services:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               startTime:
+ *                 type: string
+ *                 format: date-time
+ *               endTime:
+ *                 type: string
+ *                 format: date-time
+ *     responses:
+ *       "201":
+ *         description: Appointment created successfully.
+ *       "400":
+ *         description: Bad request due to invalid input.
+ */
+
+router.post("/admin/create", authenticateToken, authorizeRoles(["admin", "staff"]), createAppointmentAdmin);
+
+/**
+ * @swagger
+ * /api/appointments/admin/create:
+ *   post:
+ *     summary: Create a new appointment for a specific user (Admin/Staff only)
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *               - staffId
+ *               - services
+ *               - startTime
+ *               - endTime
+ *             properties:
+ *               userId:
+ *                 type: string
+ *                 description: The ID of the user to book for
  *               staffId:
  *                 type: string
  *               services:

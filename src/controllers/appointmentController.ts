@@ -117,6 +117,103 @@ export const createAppointment = async (req: Request, res: Response, next: NextF
   }
 };
 
+export const createAppointmentAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { userId, staffId, services, startTime, endTime } = req.body;
+
+    if (!userId || !staffId || !Array.isArray(services) || services.length === 0) {
+      return next(errorHandler(400, "userId, staffId and services are required"));
+    }
+
+    if (!startTime || !endTime) {
+      return next(errorHandler(400, "startTime and endTime are required"));
+    }
+
+    const now = new Date();
+    if (new Date(startTime) <= now) {
+      return next(errorHandler(400, "Appointment time has passed"));
+    }
+
+    const serviceDocs = await Service.find({ _id: { $in: services }, isActive: true });
+    if (serviceDocs.length !== services.length) {
+      return next(errorHandler(404, "One or more services not found"));
+    }
+
+    const slotCheck = await checkSlotAvailability({
+      staffId: String(staffId),
+      serviceIds: services.map((id: any) => id.toString()),
+      startTime: new Date(startTime),
+      endTime: new Date(endTime)
+    });
+    if (!slotCheck.ok) {
+      return next(errorHandler(400, slotCheck.message || "Appointment time is not available"));
+    }
+
+    const totalAmount = serviceDocs.reduce((sum, service) => sum + (service.fullPrice || 0), 0);
+    const config = await StoreConfiguration.findOne();
+    if (!config) {
+      return next(errorHandler(500, "Store configuration not found"));
+    }
+
+    const bookingFeeAmount = calculateBookingFee(totalAmount, config.appointmentFeeType, config.appointmentFeeValue);
+    const remainingAmount = Math.max(0, totalAmount - bookingFeeAmount);
+
+    const appointment = await Appointment.create({
+      customerId: userId,
+      staffId,
+      services,
+      startTime,
+      endTime,
+      bookingFeeAmount,
+      remainingAmount,
+      status: "PENDING"
+    });
+
+    const populatedAppointment = await Appointment.findById(appointment._id)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("staffId", "firstName lastName email phone")
+      .populate("services", "name duration fullPrice");
+
+    try {
+      await createInAppNotification({
+        recipient: String(userId),
+        recipientModel: "User",
+        category: "appointment",
+        subject: "Appointment booked",
+        message: "An appointment has been booked for you by an admin. Please confirm by paying the booking fee.",
+        actions: [
+          {
+            id: "confirm_appointment",
+            label: "Confirm Appointment",
+            type: "api",
+            endpoint: `/api/appointments/${appointment._id}/confirm`,
+            method: "POST",
+            variant: "primary"
+          }
+        ],
+        context: {
+          resourceId: appointment._id.toString(),
+          resourceType: "appointment"
+        },
+        metadata: {
+          appointmentId: appointment._id.toString()
+        },
+        io: req.app.get("io")
+      });
+    } catch (notificationError) {
+      console.error("In-app notification error:", notificationError);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Appointment created successfully by admin",
+      data: { appointment: populatedAppointment }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while creating appointment (admin)"));
+  }
+};
+
 export const confirmAppointment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { appointmentId } = req.params;

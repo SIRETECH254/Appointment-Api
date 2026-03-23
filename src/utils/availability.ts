@@ -170,14 +170,22 @@ export const checkSlotAvailability = async (
     })
     .filter((event): event is TimeRange => event !== null);
 
-  const events: TimeRange[] = [
-    ...conflictingAppointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-    ...breakEvents
-  ];
+  // Check for conflicts with existing appointments
+  const appointmentConflict = conflictingAppointments.find((appointment) =>
+    overlaps({ start: startTime, end: endTime }, { start: appointment.startTime, end: appointment.endTime })
+  );
 
-  const hasOverlap = events.some((event) => overlaps({ start: startTime, end: endTime }, event));
-  if (hasOverlap) {
-    return { ok: false, message: "Appointment time is not available" };
+  if (appointmentConflict) {
+    return { ok: false, message: "The selected time slot is already booked by another appointment." };
+  }
+
+  // Check for conflicts with staff breaks
+  const breakConflict = breakEvents.find((breakEvent) =>
+    overlaps({ start: startTime, end: endTime }, breakEvent)
+  );
+
+  if (breakConflict) {
+    return { ok: false, message: "The selected time slot overlaps with a scheduled staff break." };
   }
 
   return { ok: true };

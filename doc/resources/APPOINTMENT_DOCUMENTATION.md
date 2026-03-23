@@ -164,11 +164,7 @@ export const createAppointment = async (req: Request, res: Response, next: NextF
       return next(errorHandler(500, "Store configuration not found"));
     }
 
-    const bookingFeeAmount =
-      config.appointmentFeeType === "PERCENTAGE"
-        ? Math.round((totalAmount * config.appointmentFeeValue) / 100)
-        : config.appointmentFeeValue;
-
+    const bookingFeeAmount = calculateBookingFee(totalAmount, config.appointmentFeeType, config.appointmentFeeValue);
     const remainingAmount = Math.max(0, totalAmount - bookingFeeAmount);
 
     const appointment = await Appointment.create({
@@ -224,6 +220,122 @@ export const createAppointment = async (req: Request, res: Response, next: NextF
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while creating appointment"));
+  }
+};
+```
+
+#### `createAppointmentAdmin()`
+**Purpose:** Create a new appointment for a specific user  
+**Access:** Admin/Staff  
+**Validation:**
+- `userId` must be provided in the request body
+- Staff and services must exist
+- `startTime`/`endTime` must be valid and available
+**Process:**
+- Validate required fields including `userId`
+- Check slot availability for staff
+- Load services and compute total service amount
+- Fetch store configuration and calculate fees
+- Save appointment with status `PENDING`
+- Send in-app notification to the customer (specified by `userId`)
+**Response:** Appointment summary
+
+**Controller Implementation:**
+```typescript
+export const createAppointmentAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { userId, staffId, services, startTime, endTime } = req.body;
+
+    if (!userId || !staffId || !Array.isArray(services) || services.length === 0) {
+      return next(errorHandler(400, "userId, staffId and services are required"));
+    }
+
+    if (!startTime || !endTime) {
+      return next(errorHandler(400, "startTime and endTime are required"));
+    }
+
+    const now = new Date();
+    if (new Date(startTime) <= now) {
+      return next(errorHandler(400, "Appointment time has passed"));
+    }
+
+    const serviceDocs = await Service.find({ _id: { $in: services }, isActive: true });
+    if (serviceDocs.length !== services.length) {
+      return next(errorHandler(404, "One or more services not found"));
+    }
+
+    const slotCheck = await checkSlotAvailability({
+      staffId: String(staffId),
+      serviceIds: services.map((id: any) => id.toString()),
+      startTime: new Date(startTime),
+      endTime: new Date(endTime)
+    });
+    if (!slotCheck.ok) {
+      return next(errorHandler(400, slotCheck.message || "Appointment time is not available"));
+    }
+
+    const totalAmount = serviceDocs.reduce((sum, service) => sum + (service.fullPrice || 0), 0);
+    const config = await StoreConfiguration.findOne();
+    if (!config) {
+      return next(errorHandler(500, "Store configuration not found"));
+    }
+
+    const bookingFeeAmount = calculateBookingFee(totalAmount, config.appointmentFeeType, config.appointmentFeeValue);
+    const remainingAmount = Math.max(0, totalAmount - bookingFeeAmount);
+
+    const appointment = await Appointment.create({
+      customerId: userId,
+      staffId,
+      services,
+      startTime,
+      endTime,
+      bookingFeeAmount,
+      remainingAmount,
+      status: "PENDING"
+    });
+
+    const populatedAppointment = await Appointment.findById(appointment._id)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("staffId", "firstName lastName email phone")
+      .populate("services", "name duration fullPrice");
+
+    try {
+      await createInAppNotification({
+        recipient: String(userId),
+        recipientModel: "User",
+        category: "appointment",
+        subject: "Appointment booked",
+        message: "An appointment has been booked for you by an admin. Please confirm by paying the booking fee.",
+        actions: [
+          {
+            id: "confirm_appointment",
+            label: "Confirm Appointment",
+            type: "api",
+            endpoint: `/api/appointments/${appointment._id}/confirm`,
+            method: "POST",
+            variant: "primary"
+          }
+        ],
+        context: {
+          resourceId: appointment._id.toString(),
+          resourceType: "appointment"
+        },
+        metadata: {
+          appointmentId: appointment._id.toString()
+        },
+        io: req.app.get("io")
+      });
+    } catch (notificationError) {
+      console.error("In-app notification error:", notificationError);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Appointment created successfully by admin",
+      data: { appointment: populatedAppointment }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while creating appointment (admin)"));
   }
 };
 ```
@@ -323,7 +435,7 @@ export const confirmAppointment = async (req: Request, res: Response, next: Next
     res.status(200).json({
       success: true,
       message: "Booking fee payment initiated",
-      data: { appointment: populatedAppointment, payment, gateway }
+      data: { populatedAppointment, payment, gateway }
     });
   } catch (error: any) {
     next(errorHandler(500, "Server error while confirming appointment"));
@@ -451,7 +563,6 @@ export const checkIn = async (req: Request, res: Response, next: NextFunction): 
     appointmentDate.setHours(0, 0, 0, 0);
     if (today.getTime() !== appointmentDate.getTime()) {
       return next(errorHandler(400, "Check-in is only allowed on the day of the appointment"));
-    }
     }
 
     appointment.checkedInAt = new Date();
@@ -683,6 +794,7 @@ export const getAppointmentById = async (req: Request, res: Response, next: Next
 
 ```typescript
 POST   /                          // Create appointment
+POST   /admin/create              // Create appointment (admin/staff)
 POST   /:appointmentId/confirm    // Confirm appointment
 PATCH  /:appointmentId/reschedule // Reschedule
 PATCH  /:appointmentId/cancel     // Cancel
@@ -703,6 +815,7 @@ DELETE /:appointmentId            // Delete appointment
 import express from "express";
 import {
   createAppointment,
+  createAppointmentAdmin,
   confirmAppointment,
   rescheduleAppointment,
   cancelAppointment,
@@ -710,15 +823,18 @@ import {
   completeAppointment,
   markNoShow,
   getAppointments,
-  getMyAppointments
+  getMyAppointments,
+  getAppointmentById,
+  deleteAppointment
 } from "../controllers/appointmentController";
 import { authenticateToken, authorizeRoles } from "../middleware/auth";
 
 const router = express.Router();
 
 router.post("/", authenticateToken, authorizeRoles(["customer", "admin"]), createAppointment);
-router.post("/:appointmentId/confirm", authenticateToken, authorizeRoles(["admin", "staff"]), confirmAppointment);
-router.patch("/:appointmentId/reschedule", authenticateToken, authorizeRoles(["admin", "staff"]), rescheduleAppointment);
+router.post("/admin/create", authenticateToken, authorizeRoles(["admin", "staff"]), createAppointmentAdmin);
+router.post("/:appointmentId/confirm", authenticateToken, authorizeRoles(["admin", "staff", "customer"]), confirmAppointment);
+router.patch("/:appointmentId/reschedule", authenticateToken, authorizeRoles(["admin", "staff", "customer"]), rescheduleAppointment);
 router.patch("/:appointmentId/cancel", authenticateToken, authorizeRoles(["admin", "staff", "customer"]), cancelAppointment);
 router.patch("/:appointmentId/check-in", authenticateToken, authorizeRoles(["staff", "admin"]), checkIn);
 router.patch("/:appointmentId/complete", authenticateToken, authorizeRoles(["staff", "admin"]), completeAppointment);
@@ -780,6 +896,55 @@ export default router;
 **Notes:**
 - Customer is derived from the authenticated user (no `customerId` in body).
 - An in-app notification is sent to the customer with an action to confirm the appointment.
+
+#### `POST /api/appointments/admin/create`
+**Headers:** `Authorization: Bearer <token>`  
+**Body (JSON):**
+```json
+{
+  "userId": "...",
+  "staffId": "...",
+  "services": ["..."],
+  "startTime": "2026-01-25T09:00:00.000Z",
+  "endTime": "2026-01-25T10:30:00.000Z"
+}
+```
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Appointment created successfully by admin",
+  "data": {
+    "appointment": {
+      "id": "...",
+      "customerId": {
+        "id": "...",
+        "firstName": "Jane",
+        "lastName": "Customer"
+      },
+      "staffId": {
+        "id": "...",
+        "firstName": "John",
+        "lastName": "Staff"
+      },
+      "services": [
+        {
+          "id": "...",
+          "name": "Haircut",
+          "duration": 30,
+          "fullPrice": 500
+        }
+      ],
+      "status": "PENDING",
+      "bookingFeeAmount": 200,
+      "remainingAmount": 800
+    }
+  }
+}
+```
+**Notes:**
+- Allows admin/staff to create appointments for any user by providing `userId`.
+- Sends an in-app notification to the customer.
 
 #### `POST /api/appointments/:appointmentId/confirm`
 **Headers:** `Authorization: Bearer <token>`  
@@ -994,7 +1159,7 @@ router.post("/", authenticateToken, authorizeRoles(["customer", "admin"]), creat
 
 ## 📝 API Examples
 
-### Create Appointment
+### Create Appointment (Customer)
 ```bash
 curl -X POST http://localhost:4500/api/appointments \
   -H "Authorization: Bearer <token>" \
@@ -1006,38 +1171,19 @@ curl -X POST http://localhost:4500/api/appointments \
     "endTime": "2026-01-25T10:30:00.000Z"
   }'
 ```
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Appointment created",
-  "data": {
-    "appointment": {
-      "id": "...",
-      "customerId": {
-        "id": "...",
-        "firstName": "Jane",
-        "lastName": "Customer"
-      },
-      "staffId": {
-        "id": "...",
-        "firstName": "John",
-        "lastName": "Staff"
-      },
-      "services": [
-        {
-          "id": "...",
-          "name": "Haircut",
-          "duration": 30,
-          "fullPrice": 500
-        }
-      ],
-      "status": "PENDING",
-      "bookingFeeAmount": 200,
-      "remainingAmount": 800
-    }
-  }
-}
+
+### Create Appointment for User (Admin)
+```bash
+curl -X POST http://localhost:4500/api/appointments/admin/create \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "64f9_USER_ID",
+    "staffId": "64f9_STAFF_ID",
+    "services": ["64a1_SERVICE_ID"],
+    "startTime": "2026-01-25T11:00:00.000Z",
+    "endTime": "2026-01-25T12:00:00.000Z"
+  }'
 ```
 
 ### Reschedule Appointment
@@ -1099,5 +1245,5 @@ appointmentSchema.index({ services: 1 });
 
 ---
 
-**Last Updated:** January 2026  
-**Version:** 1.0.0
+**Last Updated:** March 2026  
+**Version:** 1.0.1
