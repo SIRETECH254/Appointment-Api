@@ -5,6 +5,59 @@ const getBaseUrl = () => {
   return env === "production" ? "https://api.safaricom.co.ke" : "https://sandbox.safaricom.co.ke";
 };
 
+// Create axios instance with proper headers to bypass Incapsula WAF
+const createAxiosInstance = () => {
+  return axios.create({
+    timeout: 30000, // 30 seconds timeout
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Cache-Control': 'no-cache',
+      'Content-Type': 'application/json'
+    }
+  });
+};
+
+// Retry logic with exponential backoff
+const retryRequest = async <T>(
+  requestFn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> => {
+  let lastError: any;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error: any) {
+      lastError = error;
+      
+      // Don't retry on 4xx errors (except 429 rate limit)
+      if (error?.response?.status && 
+          error.response.status >= 400 && 
+          error.response.status < 500 && 
+          error.response.status !== 429) {
+        throw error;
+      }
+      
+      // If it's the last attempt, throw the error
+      if (attempt === maxRetries - 1) {
+        throw error;
+      }
+      
+      // Exponential backoff: 1s, 2s, 4s
+      const delay = baseDelay * Math.pow(2, attempt);
+      console.log(`Daraja request failed, retrying in ${delay}ms... (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError;
+};
+
 export const getAccessToken = async (forceRefresh: boolean = false): Promise<string> => {
   const consumerKey = (process.env.MPESA_CONSUMER_KEY || "").trim();
   const consumerSecret = (process.env.MPESA_CONSUMER_SECRET || "").trim();
@@ -15,10 +68,13 @@ export const getAccessToken = async (forceRefresh: boolean = false): Promise<str
 
   const base = getBaseUrl();
   const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
+  const axiosInstance = createAxiosInstance();
 
   try {
-    const response = await axios.get(`${base}/oauth/v1/generate?grant_type=client_credentials`, {
-      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" }
+    const response = await retryRequest(async () => {
+      return await axiosInstance.get(`${base}/oauth/v1/generate?grant_type=client_credentials`, {
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" }
+      });
     });
 
     if (!response.data?.access_token) {
@@ -77,6 +133,7 @@ export interface StkPushParams {
   amount: number;
   phone: string;
   accountReference: string;
+  callbackUrl?: string;
 }
 
 export interface StkPushResponse {
@@ -88,19 +145,10 @@ export interface StkPushResponse {
 export const initiateStkPush = async (params: StkPushParams): Promise<StkPushResponse> => {
   const shortCode = process.env.MPESA_SHORT_CODE;
   const passkey = process.env.MPESA_PASSKEY;
-  const baseUrl = (process.env.CALLBACK_URL || "").trim();
-  const callbackUrl = baseUrl ? `${baseUrl}/api/payments/webhooks/mpesa` : "";
   const partyB = shortCode;
-
-  console.log("Base URL:", baseUrl);
-  console.log("Callback URL:", callbackUrl);
 
   if (!shortCode || !passkey) {
     throw new Error("Daraja short code or passkey not configured");
-  }
-
-  if (!callbackUrl) {
-    throw new Error("CALLBACK_URL or API_BASE_URL is not configured");
   }
 
   const accessToken = await getAccessToken();
@@ -111,6 +159,13 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
   // Normalize phone number to 254XXXXXXXXX format
   const normalizedPhone = normalizePhoneNumber(params.phone);
 
+  const callback = (process.env.CALLBACK_URL ? `${process.env.CALLBACK_URL}/api/payments/webhooks/mpesa` : "") ||
+                   (process.env.API_BASE_URL ? `${process.env.API_BASE_URL}/api/payments/webhooks/mpesa` : "");
+
+  if (!callback) {
+    throw new Error("Daraja callback URL not configured (CALLBACK_URL or API_BASE_URL missing)");
+  }
+
   const payload = {
     BusinessShortCode: Number(shortCode),
     Password: password,
@@ -120,14 +175,18 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
     PartyA: normalizedPhone,
     PartyB: Number(partyB),
     PhoneNumber: normalizedPhone,
-    CallBackURL: callbackUrl,
+    CallBackURL: callback,
     AccountReference: String(params.accountReference),
     TransactionDesc: "Appointment payment"
   };
 
+  const axiosInstance = createAxiosInstance();
+
   try {
-    const resp = await axios.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
+    const resp = await retryRequest(async () => {
+      return await axiosInstance.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
+      });
     });
 
     return {
@@ -217,17 +276,21 @@ export const queryStkPushStatus = async (params: StkQueryParams): Promise<StkQue
   const timestamp = buildTimestamp();
   const password = buildPassword(resolvedShortCode, resolvedPasskey, timestamp);
 
+  const axiosInstance = createAxiosInstance();
+
   try {
-    const resp = await axios.post(
-      `${base}/mpesa/stkpushquery/v1/query`,
-      {
-        BusinessShortCode: Number(resolvedShortCode),
-        Password: password,
-        Timestamp: timestamp,
-        CheckoutRequestID: params.checkoutRequestId
-      },
-      { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
-    );
+    const resp = await retryRequest(async () => {
+      return await axiosInstance.post(
+        `${base}/mpesa/stkpushquery/v1/query`,
+        {
+          BusinessShortCode: Number(resolvedShortCode),
+          Password: password,
+          Timestamp: timestamp,
+          CheckoutRequestID: params.checkoutRequestId
+        },
+        { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
+      );
+    });
 
     return {
       ok: true,
