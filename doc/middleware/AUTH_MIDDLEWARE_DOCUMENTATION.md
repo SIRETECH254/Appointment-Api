@@ -350,7 +350,7 @@ router.patch("/:appointmentId/check-in", authenticateToken, authorizeRoles(["sta
 router.patch("/:appointmentId/complete", authenticateToken, authorizeRoles(["staff", "admin"]), completeAppointment);
 router.patch("/:appointmentId/no-show", authenticateToken, authorizeRoles(["staff", "admin"]), markNoShow);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getAppointments);
-router.get("/my", authenticateToken, authorizeRoles(["customer"]), getMyAppointments);
+router.get("/my", authenticateToken, getMyAppointments);
 router.get("/:appointmentId", authenticateToken, getAppointmentById);
 router.delete("/:appointmentId", authenticateToken, authorizeRoles(["admin", "staff"]), deleteAppointment);
 ```

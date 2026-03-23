@@ -94,6 +94,7 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
 
     // Query contacts with pagination
     const contacts = await Contact.find(query)
+      .populate("userId", "firstName lastName email phone")
       .sort(sortOptions)
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
@@ -123,7 +124,8 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
 export const getContact = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { contactId } = req.params;
-    const contact = await Contact.findById(contactId);
+    const contact = await Contact.findById(contactId)
+      .populate("userId", "firstName lastName email phone");
 
     if (!contact) {
       return next(errorHandler(404, "Contact not found"));

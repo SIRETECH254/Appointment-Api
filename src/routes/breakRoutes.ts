@@ -33,24 +33,6 @@ const router = express.Router();
  *           type: string
  *         description: Filter breaks by staff ID.
  *       - in: query
- *         name: date
- *         schema:
- *           type: string
- *           format: date
- *         description: Filter breaks for a specific date (YYYY-MM-DD).
- *       - in: query
- *         name: from
- *         schema:
- *           type: string
- *           format: date-time
- *         description: Filter breaks starting from this date/time.
- *       - in: query
- *         name: to
- *         schema:
- *           type: string
- *           format: date-time
- *         description: Filter breaks up to this date/time.
- *       - in: query
  *         name: page
  *         schema:
  *           type: integer
@@ -66,7 +48,7 @@ const router = express.Router();
  *       "200":
  *         description: A paginated list of breaks.
  *       "400":
- *         description: Invalid input (e.g., invalid ID or date format).
+ *         description: Invalid input (e.g., invalid ID).
  *       "401":
  *         description: Unauthorized.
  *       "403":
@@ -107,7 +89,7 @@ router.get("/:breakId", authenticateToken, requireAdmin, getBreak);
  * @swagger
  * /api/breaks:
  *   post:
- *     summary: Create a new break for a staff member
+ *     summary: Create a new recurring daily break for a staff member
  *     tags: [Breaks]
  *     security:
  *       - bearerAuth: []
@@ -127,12 +109,14 @@ router.get("/:breakId", authenticateToken, requireAdmin, getBreak);
  *                 description: The ID of the staff member for whom to create the break.
  *               startTime:
  *                 type: string
- *                 format: date-time
- *                 description: The start time of the break.
+ *                 pattern: "^([01]\\d|2[0-3]):([0-5]\\d)$"
+ *                 example: "13:00"
+ *                 description: The start time of the break in HH:MM format (e.g., "13:00"). This break will apply to all days when the staff has working hours.
  *               endTime:
  *                 type: string
- *                 format: date-time
- *                 description: The end time of the break.
+ *                 pattern: "^([01]\\d|2[0-3]):([0-5]\\d)$"
+ *                 example: "14:00"
+ *                 description: The end time of the break in HH:MM format (e.g., "14:00"). This break will apply to all days when the staff has working hours.
  *               reason:
  *                 type: string
  *                 description: An optional reason for the break.
@@ -140,7 +124,7 @@ router.get("/:breakId", authenticateToken, requireAdmin, getBreak);
  *       "201":
  *         description: Break created successfully.
  *       "400":
- *         description: Invalid input (e.g., missing fields, invalid times).
+ *         description: Invalid input (e.g., missing fields, invalid time format).
  *       "401":
  *         description: Unauthorized.
  *       "403":
@@ -178,12 +162,14 @@ router.post("/", authenticateToken, requireAdmin, createBreak);
  *                 description: The ID of the staff member (can be changed).
  *               startTime:
  *                 type: string
- *                 format: date-time
- *                 description: The new start time of the break.
+ *                 pattern: "^([01]\\d|2[0-3]):([0-5]\\d)$"
+ *                 example: "13:00"
+ *                 description: The new start time of the break in HH:MM format (e.g., "13:00").
  *               endTime:
  *                 type: string
- *                 format: date-time
- *                 description: The new end time of the break.
+ *                 pattern: "^([01]\\d|2[0-3]):([0-5]\\d)$"
+ *                 example: "14:00"
+ *                 description: The new end time of the break in HH:MM format (e.g., "14:00").
  *               reason:
  *                 type: string
  *                 description: The new reason for the break.
@@ -191,7 +177,7 @@ router.post("/", authenticateToken, requireAdmin, createBreak);
  *       "200":
  *         description: Break updated successfully.
  *       "400":
- *         description: Invalid input (e.g., missing fields, invalid times).
+ *         description: Invalid input (e.g., invalid time format).
  *       "401":
  *         description: Unauthorized.
  *       "403":

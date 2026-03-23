@@ -393,6 +393,7 @@ export const getUserNotifications = async (
     const pageLimit = parseInt(limit as string, 10);
 
     const notifications = await Notification.find(query)
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(pageLimit)
       .skip((pageNumber - 1) * pageLimit);
@@ -435,7 +436,8 @@ export const getNotification = async (
 ): Promise<void> => {
   try {
     const { notificationId } = req.params;
-    const notification = await Notification.findById(notificationId);
+    const notification = await Notification.findById(notificationId)
+      .populate("recipient", "firstName lastName email phone");
 
     if (!notification) {
       return next(errorHandler(404, "Notification not found"));
@@ -619,6 +621,7 @@ export const getUnreadNotifications = async (
       recipient: req.user?._id,
       readAt: null
     })
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(parseInt(limit as string, 10));
 
@@ -665,6 +668,7 @@ export const getNotificationsByCategory = async (
       recipient: req.user?._id,
       category: categoryValue
     })
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(50);
 

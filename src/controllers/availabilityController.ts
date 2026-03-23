@@ -11,8 +11,8 @@ import {
   combineNairobiDateAndTimeToUTC,
   buildNairobiDayRangeUTC,
   startOfTodayNairobiUTC,
-  getDayKey // Also import getDayKey from utils now
-} from "../utils/availability"; // Import utility functions
+  getDayKey
+} from "../utils/availability";
 
 type TimeRange = { start: Date; end: Date };
 
@@ -21,8 +21,6 @@ const isValidObjectId = (value: string): boolean => mongoose.Types.ObjectId.isVa
 const overlaps = (slot: TimeRange, event: TimeRange): boolean =>
   slot.start < event.end && slot.end > event.start;
 
-// This computeSlots needs to use the new combineNairobiDateAndTimeToUTC and buildNairobiDayRangeUTC
-// This function needs to be updated. It still uses combineDateAndTime and buildDayRange.
 const computeSlots = (
   workingRanges: Array<{ start: string; end: string }>,
   date: Date, // This 'date' is expected to be a UTC date, corresponding to Nairobi local midnight
@@ -33,7 +31,6 @@ const computeSlots = (
   const availableSlots: TimeRange[] = [];
 
   for (const range of workingRanges) {
-    // Use the new Nairobi-aware combine function
     const rangeStart = combineNairobiDateAndTimeToUTC(date, range.start);
     const rangeEnd = combineNairobiDateAndTimeToUTC(date, range.end);
     if (!rangeStart || !rangeEnd || rangeStart >= rangeEnd) {
@@ -42,7 +39,8 @@ const computeSlots = (
 
     let slotStart = new Date(rangeStart);
     while (true) {
-      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000); // addMinutes equivalent
+      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
+      
       if (slotEnd > rangeEnd) break;
 
       const slot = { start: new Date(slotStart), end: slotEnd };
@@ -53,7 +51,8 @@ const computeSlots = (
         availableSlots.push(slot);
       }
 
-      slotStart = slotEnd;
+      // Move to next slot starting exactly where the previous one ended
+      slotStart = new Date(slotEnd);
     }
   }
 
@@ -65,12 +64,6 @@ const toServiceIdList = (serviceId: string | string[]): string[] => {
     return serviceId.map((value) => String(value));
   }
   return [String(serviceId)];
-};
-
-const startOfToday = (): Date => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return today;
 };
 
 export const getAvailableSlots = async (
@@ -152,18 +145,55 @@ export const getAvailableSlots = async (
     const appointments = await Appointment.find({
       staffId: staffIdStr,
       startTime: { $lt: end },
-      endTime: { $gt: start }
+      endTime: { $gt: start },
+      status: { $in: ["CONFIRMED", "COMPLETED"] }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime reason");
+    
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
+
+    const breakInfo = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        if (!isWithinHours) return null;
+        
+        return {
+          start: breakStart,
+          end: breakEnd,
+          reason: breakItem.reason
+        };
+      })
+      .filter((breakItem): breakItem is { start: Date; end: Date; reason: string | undefined } => breakItem !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
     const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events);
@@ -182,13 +212,24 @@ export const getAvailableSlots = async (
       return;
     }
 
+    const timeline = [
+      ...filteredSlots.map((slot) => ({
+        type: "available" as const,
+        startTime: slot.start,
+        endTime: slot.end
+      })),
+      ...breakInfo.map((breakItem) => ({
+        type: "break" as const,
+        startTime: breakItem.start,
+        endTime: breakItem.end,
+        reason: breakItem.reason
+      }))
+    ].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
     res.status(200).json({
       success: true,
       data: {
-        slots: filteredSlots.map((slot) => ({
-          startTime: slot.start,
-          endTime: slot.end
-        }))
+        slots: timeline
       }
     });
   } catch (error: any) {
@@ -288,18 +329,32 @@ export const getDayAvailability = async (
     const appointments = await Appointment.find({
       staffId: staffIdStr,
       startTime: { $lt: end },
-      endTime: { $gt: start }
+      endTime: { $gt: start },
+      status: { $in: ["CONFIRMED", "COMPLETED"] }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime");
+    
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
     const { totalSlots, availableSlots } = computeSlots(

@@ -590,7 +590,7 @@ export const getAppointments = async (req: Request, res: Response, next: NextFun
 
 #### `getMyAppointments()`
 **Purpose:** Customer's appointments  
-**Access:** Customer  
+**Access:** Authenticated  
 **Filters:** status, date range  
 **Pagination:** `page`, `limit` (default: page=1, limit=10)  
 **Sorting:** Results are sorted by `createdAt` in descending order (latest first)
@@ -724,7 +724,7 @@ router.patch("/:appointmentId/check-in", authenticateToken, authorizeRoles(["sta
 router.patch("/:appointmentId/complete", authenticateToken, authorizeRoles(["staff", "admin"]), completeAppointment);
 router.patch("/:appointmentId/no-show", authenticateToken, authorizeRoles(["staff", "admin"]), markNoShow);
 router.get("/", authenticateToken, authorizeRoles(["admin", "staff"]), getAppointments);
-router.get("/my", authenticateToken, authorizeRoles(["customer"]), getMyAppointments);
+router.get("/my", authenticateToken, getMyAppointments);
 router.get("/:appointmentId", authenticateToken, getAppointmentById);
 router.delete("/:appointmentId", authenticateToken, authorizeRoles(["admin", "staff"]), deleteAppointment);
 

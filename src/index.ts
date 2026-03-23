@@ -18,7 +18,9 @@ import breakRoutes from "./routes/breakRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import contactRoutes from "./routes/contactRoutes";
+import newsletterRoutes from "./routes/newsletterRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
+import reviewRoutes from "./routes/reviewRoutes";
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -30,9 +32,13 @@ const allowedOrigins: string[] = [
   "http://localhost:8083",
   "http://localhost:8084",
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "http://localhost:5173",
   "http://localhost:4500",
   "https://appointment-api-zlfq.onrender.com",
-  "https://appointment-admin-t5yy.onrender.com"
+  "https://appointment-admin-t5yy.onrender.com",
+  "https://appointment-client-gwkg.onrender.com"
 ];
 
 // Add CALLBACK_URL if it exists
@@ -130,7 +136,11 @@ app.use("/api/payments", paymentRoutes);
 
 app.use("/api/contact", contactRoutes);
 
+app.use("/api/newsletter", newsletterRoutes);
+
 app.use("/api/dashboard", dashboardRoutes);
+
+app.use("/api/reviews", reviewRoutes);
 
 // Socket.io setup for real-time features
 // Create HTTP server that wraps the Express app

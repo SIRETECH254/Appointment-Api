@@ -142,6 +142,7 @@ export const getUserNotifications = async (
     const pageLimit = parseInt(limit as string, 10);
 
     const notifications = await Notification.find(query)
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(pageLimit)
       .skip((pageNumber - 1) * pageLimit);
@@ -175,13 +176,18 @@ export const getNotification = async (
 ): Promise<void> => {
   try {
     const { notificationId } = req.params;
-    const notification = await Notification.findById(notificationId);
+    const notification = await Notification.findById(notificationId)
+      .populate("recipient", "firstName lastName email phone");
 
     if (!notification) {
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only access your own notifications"));
     }
 
@@ -209,7 +215,11 @@ export const markAsRead = async (
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only mark your own notifications as read"));
     }
 
@@ -264,7 +274,11 @@ export const deleteNotification = async (
       return next(errorHandler(404, "Notification not found"));
     }
 
-    if (notification.recipient.toString() !== req.user?._id?.toString()) {
+    const recipientId = notification.recipient && (notification.recipient as any)._id 
+      ? (notification.recipient as any)._id.toString() 
+      : notification.recipient.toString();
+
+    if (recipientId !== req.user?._id?.toString()) {
       return next(errorHandler(403, "You can only delete your own notifications"));
     }
 
@@ -314,6 +328,7 @@ export const getUnreadNotifications = async (
       recipient: req.user?._id,
       readAt: null
     })
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(parseInt(limit as string, 10));
 
@@ -351,6 +366,7 @@ export const getNotificationsByCategory = async (
       recipient: req.user?._id,
       category: categoryValue
     })
+      .populate("recipient", "firstName lastName email phone")
       .sort({ createdAt: "desc" })
       .limit(50);
 

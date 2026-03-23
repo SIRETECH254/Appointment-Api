@@ -49,7 +49,9 @@ import breakRoutes from "./routes/breakRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import contactRoutes from "./routes/contactRoutes";
+import newsletterRoutes from "./routes/newsletterRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
+import reviewRoutes from "./routes/reviewRoutes";
 ```
 
 ---
@@ -75,9 +77,12 @@ const allowedOrigins: string[] = [
   "http://localhost:8083",
   "http://localhost:8084",
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
   "http://localhost:4500",
   "https://appointment-api-zlfq.onrender.com",
-  "https://appointment-admin-t5yy.onrender.com"
+  "https://appointment-admin-t5yy.onrender.com",
+  "https://appointment-client-gwkg.onrender.com"
 ];
 
 // Add CALLBACK_URL if it exists
@@ -211,7 +216,9 @@ app.use("/api/breaks", breakRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/newsletter", newsletterRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/reviews", reviewRoutes);
 ```
 
 ---
@@ -260,6 +267,26 @@ io.on("connection", (socket) => {
 
 app.set("io", io); // Make Socket.io instance accessible via app.get('io')
 app.set("socketConnections", socketConnections); // Store active socket connections
+```
+
+---
+
+## Main API Endpoint
+
+A welcome endpoint is provided at the root API path to provide basic information about the API.
+
+```typescript
+// Main API endpoint
+app.get("/api", (_req, res) => {
+  res.json({
+    message: "Welcome to Appointment API",
+    version: "1.0.0",
+    documentation: "/api/docs",
+    endpoints: {
+      health: "/api/health"
+    }
+  });
+});
 ```
 
 ---

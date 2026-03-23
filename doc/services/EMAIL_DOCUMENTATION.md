@@ -13,14 +13,14 @@
 
 ## Email Service Overview
 
-The email service is responsible for sending various types of email communications, such as OTP codes, password reset links, welcome messages, and general notifications. It utilizes `nodemailer` to interact with an SMTP server (configured for Gmail by default).
+The email service is responsible for sending various types of email communications, such as OTP codes, password reset links, welcome messages, and general notifications. It utilizes `SendGrid` (`@sendgrid/mail`) to deliver emails.
 
 **Key Features:**
 -   **OTP Delivery:** Sends one-time password codes for user verification.
 -   **Password Reset Links:** Delivers secure links for password recovery.
 -   **Welcome Messages:** Greets new users upon successful account verification.
 -   **Generic Notifications:** Supports sending custom messages for various events.
--   **Configurable SMTP:** Easily adaptable to different SMTP providers.
+-   **HTML Support:** Emails are sent with both text and HTML content for better formatting.
 
 ---
 
@@ -29,35 +29,25 @@ The email service is responsible for sending various types of email communicatio
 Email service credentials and settings are managed through environment variables and configured in `src/services/external/emailService.ts`.
 
 **Environment Variables:**
--   `SMTP_HOST`: The SMTP server host (e.g., `smtp.gmail.com`).
--   `SMTP_PORT`: The SMTP server port (default: `587`).
--   `SMTP_USER`: The username for SMTP authentication (e.g., your Gmail address).
--   `SMTP_PASSWORD` or `SMTP_PASS`: The password for SMTP authentication (e.g., your Gmail App Password).
--   `FROM_EMAIL`: The email address to use as the sender (default: `noreply@appointmentapp.com`).
+-   `SMTP_PASS`: The SendGrid API Key. (Required)
+-   `SMTP_USER`: The sender email address (or user for some configurations). If `FROM_EMAIL` is not set, this is used. (Required for sender address if FROM_EMAIL is missing)
+-   `FROM_EMAIL`: The verified sender email address. (Default: `noreply@appointmentapp.com`)
 -   `FRONTEND_URL`: Used to construct password reset links (e.g., `http://localhost:3000`).
 
 **File: `src/services/external/emailService.ts` - Initialization Snippet**
 ```typescript
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import { errorHandler } from "../../middleware/errorHandler";
 
-const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-const smtpUser = process.env.SMTP_USER || "";
-const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_PASS || "";
-const smtpHost = process.env.SMTP_HOST || "";
-const fromEmail = process.env.FROM_EMAIL || smtpUser || "noreply@appointmentapp.com";
+const smtpPass = process.env.SMTP_PASS || "";
+// SendGrid requires a verified sender. We'll use SMTP_USER or FROM_EMAIL if available.
+const fromEmail = process.env.SMTP_USER || process.env.FROM_EMAIL || "noreply@appointmentapp.com";
 
-// Create email transporter
-const createTransporter = () => {
-  if (!smtpHost || !smtpUser || !smtpPass) {
-    throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.");
-  }
-
-  return nodemailer.createTransport({
-    service: "gmail", // Configured for Gmail, but can be changed
-    auth: { user: smtpUser, pass: smtpPass }
-  });
-};
+if (!smtpPass) {
+  console.warn("SendGrid API Key (SMTP_PASS) is missing. Email sending will fail.");
+} else {
+  sgMail.setApiKey(smtpPass);
+}
 ```
 
 ---
@@ -65,21 +55,6 @@ const createTransporter = () => {
 ## Key Functions/Service Methods
 
 The `src/services/external/emailService.ts` file provides the following functions for sending emails.
-
-**`createTransporter`**
-A helper function that creates and returns a `nodemailer` transporter instance, configured with SMTP credentials. It throws an error if email configuration environment variables are missing.
-```typescript
-const createTransporter = () => {
-  if (!smtpHost || !smtpUser || !smtpPass) {
-    throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.");
-  }
-
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: smtpUser, pass: smtpPass }
-  });
-};
-```
 
 **`sendOTPEmail`**
 Sends an email containing a One-Time Password to a user.
@@ -90,28 +65,24 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
   }
 
   try {
-    const transporter = createTransporter();
-    const message = `Hello \${name}, your OTP code is \${otp}. It expires soon.`;
+    const message = `Hello ${name}, your OTP code is ${otp}. It expires soon.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `"APPOINTMENT" <${fromEmail}>`,
       subject: "Your OTP Code",
-      text: message
+      text: message,
+      html: `<strong>${message}</strong>`, // SendGrid supports HTML
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send OTP email: \${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending OTP email:", error);
-    throw errorHandler(500, `Failed to send OTP email: \${error.message}`);
+    if (error.response) {
+      console.error(error.response.body);
+    }
+    throw errorHandler(500, `Failed to send OTP email: ${error.message}`);
   }
 };
 ```
@@ -129,30 +100,23 @@ export const sendPasswordResetEmail = async (
   }
 
   try {
-    const transporter = createTransporter();
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-    const resetUrl = `${frontendUrl}/reset-password/\${resetToken}`;
-    const message = `Hello \${name}, reset your password using: \${resetUrl}. This link expires soon.`;
+    const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+    const message = `Hello ${name}, reset your password using: ${resetUrl}. This link expires soon.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `"APPOINTMENT" <${fromEmail}>`,
       subject: "Password Reset",
-      text: message
+      text: message,
+      html: `<p>Hello ${name},</p><p>Reset your password using: <a href="${resetUrl}">${resetUrl}</a></p><p>This link expires soon.</p>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send password reset email: \${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending password reset email:", error);
-    throw errorHandler(500, `Failed to send password reset email: \${error.message}`);
+    throw errorHandler(500, `Failed to send password reset email: ${error.message}`);
   }
 };
 ```
@@ -166,28 +130,21 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
   }
 
   try {
-    const transporter = createTransporter();
-    const message = `Welcome \${name}! Your account has been verified successfully.`;
+    const message = `Welcome ${name}! Your account has been verified successfully.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `"APPOINTMENT" <${fromEmail}>`,
       subject: "Welcome to Appointment API",
-      text: message
+      text: message,
+      html: `<strong>${message}</strong>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send welcome email: \${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending welcome email:", error);
-    throw errorHandler(500, `Failed to send welcome email: \${error.message}`);
+    throw errorHandler(500, `Failed to send welcome email: ${error.message}`);
   }
 };
 ```
@@ -201,27 +158,19 @@ export const sendGenericEmail = async (email: string, subject: string, message: 
   }
 
   try {
-    const transporter = createTransporter();
-
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `"APPOINTMENT" <${fromEmail}>`,
       subject,
-      text: message
+      text: message,
+      html: `<p>${message}</p>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send email: \${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending email:", error);
-    throw errorHandler(500, `Failed to send email: \${error.message}`);
+    throw errorHandler(500, `Failed to send email: ${error.message}`);
   }
 };
 ```
@@ -279,45 +228,17 @@ import { sendGenericEmail } from "../services/external/emailService";
 import { sendGenericEmail } from "../services/external/emailService";
 
 // ... inside replyToContact function
-      await sendGenericEmail(recipientEmail, `Re: \${contact.subject}`, trimmedMessage);
+      await sendGenericEmail(recipientEmail, `Re: ${contact.subject}`, trimmedMessage);
 ```
 
 ---
 
 ## Error Handling
 
-All email service functions are designed with `try-catch` blocks to manage potential errors during email transmission, such as invalid configurations, SMTP server issues, or network problems. Errors are standardized using the `errorHandler` middleware. A check for missing SMTP environment variables is performed during transporter creation.
+All email service functions are designed with `try-catch` blocks to manage potential errors during email transmission. Errors are standardized using the `errorHandler` middleware.
 
 ---
 
-## API Examples
-
-**Send Bulk Notification via Email (Admin only)**
-
-```bash
-curl -X POST http://localhost:4500/api/notifications/bulk 
-  -H "Authorization: Bearer <admin_token>" 
-  -H "Content-Type: application/json" 
-  -d '{
-    "recipients": ["<user_id_1>", "<user_id_2>"],
-    "type": "email",
-    "category": "general",
-    "subject": "System Announcement",
-    "message": "Dear user, the system will undergo maintenance tonight."
-  }'
-```
-
-**Reply to a Contact Submission (Admin only)**
-
-```bash
-curl -X POST http://localhost:4500/api/contact/<contactId>/reply 
-  -H "Authorization: Bearer <admin_token>" 
-  -H "Content-Type: application/json" 
-  -d '{"message": "Thank you for your message. We have received it and will respond shortly."}'
-```
-
----
-
-**Last Updated:** February 2026
-**Version:** 1.0.0
+**Last Updated:** March 2026
+**Version:** 1.0.1
 **Maintainer:** Appointment API Development Team

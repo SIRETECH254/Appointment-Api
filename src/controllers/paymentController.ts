@@ -147,6 +147,13 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     const io = req.app.get("io");
     const payload = req.body;
 
+    // Log the full payload for debugging
+    console.log('===== M-PESA WEBHOOK RECEIVED =====');
+    console.log('Full payload:', JSON.stringify(payload, null, 2));
+    console.log('Body.stkCallback:', JSON.stringify(payload?.Body?.stkCallback, null, 2));
+    console.log('CallbackMetadata:', JSON.stringify(payload?.Body?.stkCallback?.CallbackMetadata, null, 2));
+    console.log('====================================');
+
     if (payload?.Body?.stkCallback) {
       io?.emit("callback.received", {
         message: payload?.Body?.stkCallback.ResultDesc,
@@ -155,18 +162,27 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     }
 
     const parsed = parseCallback(payload);
+    console.log('Parsed callback result:', JSON.stringify(parsed, null, 2));
+    console.log('this is daraja callback');
+    
     if (!parsed.valid || !parsed.checkoutRequestId) {
+      console.log('❌ Invalid payload or missing checkoutRequestId');
       res.status(200).json({ success: false });
       return;
     }
 
+    console.log('🔍 Looking for payment with checkoutRequestId:', parsed.checkoutRequestId);
     const payment = await Payment.findOne({ "processorRefs.daraja.checkoutRequestId": parsed.checkoutRequestId });
     if (!payment) {
+      console.log('❌ Payment not found for checkoutRequestId:', parsed.checkoutRequestId);
       res.status(200).json({ success: false });
       return;
     }
 
+    console.log('✅ Payment found:', payment._id.toString(), 'Status:', payment.status);
+
     if (!parsed.success) {
+      console.log('❌ Payment failed. ResultCode:', payload?.Body?.stkCallback?.ResultCode);
       payment.status = "FAILED";
       await payment.save();
       res.status(200).json({ success: true });
@@ -174,20 +190,30 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
     }
 
     payment.transactionRef = parsed.checkoutRequestId;
+    console.log('✅ Payment successful. Processing payment...');
     
     if (payment.appointmentId) {
+      console.log('📅 Payment linked to appointment:', payment.appointmentId);
       const appointment = await Appointment.findById(payment.appointmentId);
       if (!appointment) {
+        console.log('❌ Appointment not found:', payment.appointmentId);
         res.status(200).json({ success: false });
         return;
       }
       await applySuccessfulPayment({ appointment, payment, io });
+      console.log('✅ Payment applied to appointment successfully');
     } else {
+      console.log('💳 Service-only payment (no appointment)');
       await applySuccessfulPayment({ appointment: null, payment, io });
+      console.log('✅ Service payment processed successfully');
     }
     
+    console.log('✅ Webhook processing completed successfully');
     res.status(200).json({ success: true });
   } catch (error: any) {
+    console.error('❌ ERROR in M-Pesa webhook handler:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Request body:', JSON.stringify(req.body, null, 2));
     next(errorHandler(500, "Server error while processing M-Pesa webhook"));
   }
 };
@@ -253,6 +279,8 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
 
     // Query payments with pagination
     const payments = await Payment.find(query)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("appointmentId", "startTime status")
       .sort({ createdAt: "desc" })
       .limit(options.limit)
       .skip((options.page - 1) * options.limit);
@@ -278,19 +306,69 @@ export const getPayments = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+export const getMyPayments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { status, method, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const query: any = { customerId: req.user?._id };
+    
+    if (status) query.status = status;
+    if (method) query.method = method;
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(String(startDate));
+      if (endDate) query.createdAt.$lte = new Date(String(endDate));
+    }
+
+    const options = {
+      page: parseInt(page as string, 10),
+      limit: parseInt(limit as string, 10)
+    };
+
+    const payments = await Payment.find(query)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("appointmentId", "startTime status")
+      .sort({ createdAt: "desc" })
+      .limit(options.limit)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await Payment.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        payments,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalPayments: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+  } catch (error: any) {
+    next(errorHandler(500, "Server error while fetching your payments"));
+  }
+};
+
 export const getPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { paymentId } = req.params;
-    const payment = await Payment.findById(paymentId);
+    const payment = await Payment.findById(paymentId)
+      .populate("customerId", "firstName lastName email phone")
+      .populate("appointmentId");
     if (!payment) return next(errorHandler(404, "Payment not found"));
 
     const roleNames = req.user?.roleNames || [];
     const isPrivileged = roleNames.includes("admin") || roleNames.includes("staff");
-    if (!isPrivileged) {
-      const appointment = await Appointment.findById(payment.appointmentId).select("customerId");
-      if (!appointment || appointment.customerId.toString() !== req.user?._id.toString()) {
-        return next(errorHandler(403, "Access denied"));
-      }
+    
+    // Get the actual customer ID string for comparison, whether populated or not
+    const paymentCustomerId = payment.customerId && (payment.customerId as any)._id 
+      ? (payment.customerId as any)._id.toString() 
+      : payment.customerId?.toString();
+    
+    if (!isPrivileged && (!paymentCustomerId || paymentCustomerId !== req.user?._id.toString())) {
+      return next(errorHandler(403, "Access denied"));
     }
 
     res.status(200).json({ success: true, data: { payment } });
@@ -327,6 +405,34 @@ export const checkPaymentStatus = async (req: Request, res: Response, next: Next
 
     // Query Daraja API for STK push status
     const statusResult = await queryStkPushStatus({ checkoutRequestId });
+
+    // Proactively update payment if we have a definitive result from Daraja
+    if (statusResult.ok && statusResult.resultCode !== undefined) {
+      const io = req.app.get("io");
+      // Convert resultCode to string for comparison (handles both "0" and 0)
+      const resultCodeStr = String(statusResult.resultCode);
+      
+      if (resultCodeStr === "0") {
+        // Success - update payment and appointment if not already SUCCESS
+        if (payment.status !== "SUCCESS") {
+          if (payment.appointmentId) {
+            const appointment = await Appointment.findById(payment.appointmentId);
+            if (appointment) {
+              await applySuccessfulPayment({ appointment, payment, io });
+            }
+          } else {
+            await applySuccessfulPayment({ appointment: null, payment, io });
+          }
+        }
+      } else {
+        // Failure (codes like "1032", "1", etc.) - only update if still PENDING
+        if (payment.status === "PENDING") {
+          payment.status = "FAILED";
+          await payment.save();
+          io?.emit("payment.updated", { paymentId: payment._id.toString(), status: "FAILED" });
+        }
+      }
+    }
 
     // Return payment details along with status query result
     res.status(200).json({

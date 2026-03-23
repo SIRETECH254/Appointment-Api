@@ -1,23 +1,19 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import { errorHandler } from "../../middleware/errorHandler";
 
-const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-const smtpUser = process.env.SMTP_USER || "";
-const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_PASS || "";
-const smtpHost = process.env.SMTP_HOST || "";
-const fromEmail = process.env.FROM_EMAIL || smtpUser || "noreply@appointmentapp.com";
+// SendGrid requires a verified sender. We'll use SMTP_USER or FROM_EMAIL if available.
+const fromEmail = process.env.SMTP_FROM || "";
 
-// Create email transporter
-const createTransporter = () => {
-  if (!smtpHost || !smtpUser || !smtpPass) {
-    throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.");
-  }
+// Initialize SendGrid with API Key
+const initializeSendGrid = () => {
 
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: smtpUser, pass: smtpPass }
-  });
-};
+    if (!process.env.SMTP_PASS) {
+        throw errorHandler(500, "SendGrid API Key is missing. Please check the SMTP_PASS environment variable.")
+    }
+
+    sgMail.setApiKey(process.env.SMTP_PASS)
+
+}
 
 // Send OTP email
 export const sendOTPEmail = async (email: string, otp: string, name: string = "User") => {
@@ -26,27 +22,24 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
   }
 
   try {
-    const transporter = createTransporter();
+    initializeSendGrid();
     const message = `Hello ${name}, your OTP code is ${otp}. It expires soon.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `APPOINTMENT <${fromEmail}>`,
       subject: "Your OTP Code",
-      text: message
+      text: message,
+      html: `<strong>${message}</strong>`, // SendGrid supports HTML
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send OTP email: ${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending OTP email:", error);
+    if (error.response) {
+      console.error(error.response.body);
+    }
     throw errorHandler(500, `Failed to send OTP email: ${error.message}`);
   }
 };
@@ -62,29 +55,26 @@ export const sendPasswordResetEmail = async (
   }
 
   try {
-    const transporter = createTransporter();
+    initializeSendGrid();
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
     const message = `Hello ${name}, reset your password using: ${resetUrl}. This link expires soon.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `"APPOINTMENT" <${fromEmail}>`,
       subject: "Password Reset",
-      text: message
+      text: message,
+      html: `<p>Hello ${name},</p><p>Reset your password using: <a href="${resetUrl}">${resetUrl}</a></p><p>This link expires soon.</p>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send password reset email: ${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending password reset email:", error);
+    if (error.response) {
+      console.error(error.response.body);
+    }
     throw errorHandler(500, `Failed to send password reset email: ${error.message}`);
   }
 };
@@ -96,27 +86,24 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
   }
 
   try {
-    const transporter = createTransporter();
+    initializeSendGrid();
     const message = `Welcome ${name}! Your account has been verified successfully.`;
 
-    const mailOptions = {
-      from: fromEmail,
+    const msg = {
       to: email,
+      from: `APPOINTMENT <${fromEmail}>`,
       subject: "Welcome to Appointment API",
-      text: message
+      text: message,
+      html: `<strong>${message}</strong>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send welcome email: ${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending welcome email:", error);
+    if (error.response) {
+      console.error(error.response.body);
+    }
     throw errorHandler(500, `Failed to send welcome email: ${error.message}`);
   }
 };
@@ -127,26 +114,22 @@ export const sendGenericEmail = async (email: string, subject: string, message: 
   }
 
   try {
-    const transporter = createTransporter();
-
-    const mailOptions = {
-      from: fromEmail,
+    initializeSendGrid();
+    const msg = {
       to: email,
+      from: `APPOINTMENT <${fromEmail}>`,
       subject,
-      text: message
+      text: message,
+      html: `<p>${message}</p>`,
     };
 
-    return new Promise((resolve, reject) => {
-      transporter.sendMail(mailOptions, (error: any, info: any) => {
-        if (error) {
-          reject(errorHandler(500, `Failed to send email: ${error.message}`));
-        } else {
-          resolve({ success: true, messageId: info.messageId });
-        }
-      });
-    });
+    await sgMail.send(msg);
+    return { success: true };
   } catch (error: any) {
     console.error("Error sending email:", error);
+    if (error.response) {
+      console.error(error.response.body);
+    }
     throw errorHandler(500, `Failed to send email: ${error.message}`);
   }
 };

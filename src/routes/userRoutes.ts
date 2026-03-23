@@ -23,7 +23,8 @@ import {
   adminCreateCustomer,
   assignRole,
   removeRole,
-  getCustomers
+  getCustomers,
+  getStaff
 } from "../controllers/userController";
 import { authenticateToken, authorizeRoles, requireAdmin } from "../middleware/auth";
 import { uploadUserAvatar } from "../config/cloudinary";
@@ -299,6 +300,50 @@ router.post("/admin-create", authenticateToken, authorizeRoles(["admin"]), admin
  *         description: Server error.
  */
 router.get("/customers", authenticateToken, authorizeRoles(["admin"]), getCustomers);
+// List staff
+/**
+ * @swagger
+ * /api/users/staff:
+ *   get:
+ *     summary: Get a paginated list of staff
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination.
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page.
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search staff by first name, last name, or email.
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, inactive, verified, unverified]
+ *         description: Filter staff by their active or verification status.
+ *     responses:
+ *       "200":
+ *         description: A paginated list of staff users.
+ *       "401":
+ *         description: Unauthorized.
+ *       "404":
+ *         description: Staff role not found.
+ *       "500":
+ *         description: Server error.
+ */
+router.get("/staff", authenticateToken, getStaff);
 // List all users
 /**
  * @swagger

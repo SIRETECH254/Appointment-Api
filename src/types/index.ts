@@ -42,6 +42,7 @@ export interface IAppointment extends Document {
 
 export interface IPayment extends Document {
   _id: Types.ObjectId;
+  customerId?: Types.ObjectId;
   appointmentId?: Types.ObjectId;
   paymentNumber: string;
   amount: number;
@@ -61,8 +62,8 @@ export interface IPayment extends Document {
 export interface IBreak extends Document {
   _id: Types.ObjectId;
   staffId: Types.ObjectId;
-  startTime: Date;
-  endTime: Date;
+  startTime: string; // HH:MM format
+  endTime: string; // HH:MM format
   reason?: string;
   createdAt: Date;
 }
@@ -202,6 +203,31 @@ export interface INotification extends Document {
   context?: NotificationContext;
   expiresAt?: Date;
   metadata?: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface INewsletter extends Document {
+  _id: Types.ObjectId;
+  email: string;
+  userId?: Types.ObjectId | null;
+  status: "SUBSCRIBED" | "UNSUBSCRIBED" | "BOUNCED";
+  subscribedAt: Date;
+  unsubscribedAt?: Date;
+  unsubscribeToken?: string;
+  source: "WEBSITE" | "ADMIN" | "API" | "IMPORT";
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IReview extends Document {
+  _id: Types.ObjectId;
+  userId: Types.ObjectId;
+  appointmentId: Types.ObjectId;
+  rating: number; // 1-5
+  comment?: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
   createdAt: Date;
   updatedAt: Date;
 }

@@ -3,17 +3,20 @@ import mongoose from "mongoose";
 import { errorHandler } from "../middleware/errorHandler";
 import BreakModel from "../models/Break";
 import User from "../models/User";
-import { parseNairobiDateToUTC, combineNairobiDateAndTimeToUTC, buildNairobiDayRangeUTC } from '../utils/availability'; // Import utility functions
 
 const isValidObjectId = (value: string): boolean => mongoose.Types.ObjectId.isValid(value);
 
+// Validation function for HH:MM format
+const validateTimeFormat = (time: string): boolean => {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+};
 
 export const createBreak = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { staffId, date, startTime: timeStart, endTime: timeEnd, reason } = req.body;
+    const { staffId, startTime, endTime, reason } = req.body;
 
-    if (!staffId || !date || !timeStart || !timeEnd) {
-      return next(errorHandler(400, "staffId, date, startTime and endTime are required"));
+    if (!staffId || !startTime || !endTime) {
+      return next(errorHandler(400, "staffId, startTime and endTime are required"));
     }
 
     const staffIdStr = String(staffId);
@@ -21,25 +24,19 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
       return next(errorHandler(400, "Invalid staffId"));
     }
 
-    const dateOnlyUTC = parseNairobiDateToUTC(date);
-    if (!dateOnlyUTC) {
-      return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
+    const startTimeStr = String(startTime).trim();
+    const endTimeStr = String(endTime).trim();
+
+    if (!validateTimeFormat(startTimeStr)) {
+      return next(errorHandler(400, "Invalid startTime format. Use HH:MM format (e.g., 13:00)"));
     }
 
-    const start = combineNairobiDateAndTimeToUTC(dateOnlyUTC, timeStart);
-    const end = combineNairobiDateAndTimeToUTC(dateOnlyUTC, timeEnd);
-
-    if (!start || !end) {
-      return next(errorHandler(400, "Invalid startTime or endTime format. Use HH:MM"));
+    if (!validateTimeFormat(endTimeStr)) {
+      return next(errorHandler(400, "Invalid endTime format. Use HH:MM format (e.g., 14:00)"));
     }
 
-    if (start >= end) {
+    if (startTimeStr >= endTimeStr) {
       return next(errorHandler(400, "startTime must be earlier than endTime"));
-    }
-
-    const nowUTC = new Date();
-    if (end.getTime() <= nowUTC.getTime()) {
-        return next(errorHandler(400, "Cannot create a break in the past"));
     }
 
     const staff = await User.findById(staffIdStr).select("_id");
@@ -49,8 +46,8 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
 
     const newBreak = new BreakModel({
       staffId: staffIdStr,
-      startTime: start,
-      endTime: end,
+      startTime: startTimeStr,
+      endTime: endTimeStr,
       reason: typeof reason === "string" ? reason.trim() : undefined
     });
 
@@ -63,13 +60,16 @@ export const createBreak = async (req: Request, res: Response, next: NextFunctio
     });
   } catch (error: any) {
     console.error("Create break error:", error);
+    if (error.message && error.message.includes("startTime must be earlier")) {
+      return next(errorHandler(400, error.message));
+    }
     next(errorHandler(500, "Server error while creating break"));
   }
 };
 
 export const getBreaks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { staffId, date, from, to, page = 1, limit = 10 } = req.query;
+    const { staffId, page = 1, limit = 10 } = req.query;
     const query: any = {};
 
     if (staffId) {
@@ -78,30 +78,6 @@ export const getBreaks = async (req: Request, res: Response, next: NextFunction)
         return next(errorHandler(400, "Invalid staffId"));
       }
       query.staffId = staffIdStr;
-    }
-
-    if (date) {
-      const dateOnlyUTC = parseNairobiDateToUTC(String(date));
-      if (!dateOnlyUTC) {
-        return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
-      }
-      const { start, end } = buildNairobiDayRangeUTC(dateOnlyUTC);
-      query.startTime = { $lt: end };
-      query.endTime = { $gt: start };
-    } else if (from || to) {
-      const fromDate = from ? new Date(String(from)) : null;
-      const toDate = to ? new Date(String(to)) : null;
-      if ((from && !fromDate) || (to && !toDate)) {
-        return next(errorHandler(400, "Invalid from or to date"));
-      }
-      if (fromDate && toDate) {
-        query.startTime = { $lt: toDate };
-        query.endTime = { $gt: fromDate };
-      } else if (fromDate) {
-        query.endTime = { $gt: fromDate };
-      } else if (toDate) {
-        query.startTime = { $lt: toDate };
-      }
     }
 
     // Pagination options
@@ -150,7 +126,8 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
       return next(errorHandler(400, "Invalid breakId"));
     }
 
-    const existing = await BreakModel.findById(breakId);
+    const existing = await BreakModel.findById(breakId)
+      .populate("staffId", "firstName lastName email phone");
     if (!existing) {
       return next(errorHandler(404, "Break not found"));
     }
@@ -168,7 +145,7 @@ export const getBreak = async (req: Request, res: Response, next: NextFunction):
 export const updateBreak = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const breakIdParam = req.params.breakId;
-    const { staffId, date, startTime: timeStart, endTime: timeEnd, reason } = req.body;
+    const { staffId, startTime, endTime, reason } = req.body;
 
     if (!breakIdParam) {
       return next(errorHandler(400, "breakId is required"));
@@ -183,20 +160,6 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       return next(errorHandler(404, "Break not found"));
     }
 
-    let updatedStartTime: Date | null = existing.startTime;
-    let updatedEndTime: Date | null = existing.endTime;
-    let baseDateForTimes = existing.startTime; // Start with existing break's date part (which is UTC)
-
-    // If a new date is provided, update the base date for time calculations
-    if (date !== undefined) {
-        const newDateUTC = parseNairobiDateToUTC(date);
-        if (!newDateUTC) {
-            return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
-        }
-        // When changing date, time parts should remain the same as existing, but applied to new date
-        baseDateForTimes = newDateUTC;
-    }
-
     if (staffId !== undefined) {
       const staffIdStr = String(staffId);
       if (!isValidObjectId(staffIdStr)) {
@@ -209,54 +172,25 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
       existing.staffId = staff._id;
     }
 
-    // Update startTime if timeStart (HH:MM) is provided or if date was changed
-    if (timeStart !== undefined) {
-        const newStart = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeStart);
-        if (!newStart) {
-            return next(errorHandler(400, "Invalid startTime format. Use HH:MM"));
-        }
-        updatedStartTime = newStart;
-    } else if (date !== undefined) { // If only date changed, reconstruct startTime with old time
-        // existing.startTime is UTC, so get its HH:MM based on Nairobi offset
-        const existingStartHour = existing.startTime.getUTCHours() + 3; // EAT offset
-        const existingStartMinute = existing.startTime.getUTCMinutes();
-        const existingTimeStr = `${String(existingStartHour % 24).padStart(2, '0')}:${String(existingStartMinute).padStart(2, '0')}`;
-        
-        updatedStartTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
-        if (!updatedStartTime) {
-            return next(errorHandler(500, "Failed to reconstruct startTime with new date"));
-        }
+    if (startTime !== undefined) {
+      const startTimeStr = String(startTime).trim();
+      if (!validateTimeFormat(startTimeStr)) {
+        return next(errorHandler(400, "Invalid startTime format. Use HH:MM format (e.g., 13:00)"));
+      }
+      existing.startTime = startTimeStr;
     }
 
-    // Update endTime if timeEnd (HH:MM) is provided or if date was changed
-    if (timeEnd !== undefined) {
-        const newEnd = combineNairobiDateAndTimeToUTC(baseDateForTimes, timeEnd);
-        if (!newEnd) {
-            return next(errorHandler(400, "Invalid endTime format. Use HH:MM"));
-        }
-        updatedEndTime = newEnd;
-    } else if (date !== undefined) { // If only date changed, reconstruct endTime with old time
-        const existingEndHour = existing.endTime.getUTCHours() + 3; // EAT offset
-        const existingEndMinute = existing.endTime.getUTCMinutes();
-        const existingTimeStr = `${String(existingEndHour % 24).padStart(2, '0')}:${String(existingEndMinute).padStart(2, '0')}`;
-
-        updatedEndTime = combineNairobiDateAndTimeToUTC(baseDateForTimes, existingTimeStr);
-        if (!updatedEndTime) {
-            return next(errorHandler(500, "Failed to reconstruct endTime with new date"));
-        }
+    if (endTime !== undefined) {
+      const endTimeStr = String(endTime).trim();
+      if (!validateTimeFormat(endTimeStr)) {
+        return next(errorHandler(400, "Invalid endTime format. Use HH:MM format (e.g., 14:00)"));
+      }
+      existing.endTime = endTimeStr;
     }
-    
-    // Apply updated times to the existing document
-    existing.startTime = updatedStartTime!;
-    existing.endTime = updatedEndTime!;
 
-    if (existing.startTime.getTime() >= existing.endTime.getTime()) {
+    // Validate startTime < endTime (using string comparison)
+    if (existing.startTime >= existing.endTime) {
       return next(errorHandler(400, "startTime must be earlier than endTime"));
-    }
-
-    const nowUTC = new Date();
-    if (existing.endTime.getTime() <= nowUTC.getTime()) {
-        return next(errorHandler(400, "Cannot update a break to be in the past"));
     }
 
     if (reason !== undefined) {
@@ -276,6 +210,9 @@ export const updateBreak = async (req: Request, res: Response, next: NextFunctio
     });
   } catch (error: any) {
     console.error("Update break error:", error);
+    if (error.message && error.message.includes("startTime must be earlier")) {
+      return next(errorHandler(400, error.message));
+    }
     next(errorHandler(500, "Server error while updating break"));
   }
 };

@@ -35,23 +35,29 @@ This section explains the core slot logic only.
 
 ### What a Slot Is
 - A slot is not stored in the database.
-- A slot is a calculated start time where a service can fit inside a staff member’s working hours without overlapping an existing appointment or break.
+- A slot is a calculated start time where a service can fit inside a staff member's working hours without overlapping an existing appointment or break.
 
 ### Data Used for Slot Calculation
 Only four inputs are required:
 - Staff working hours (e.g. 09:00–20:00)
 - Service duration (e.g. 50 minutes)
 - Existing appointments for the staff on the selected date
-- Breaks for the staff on the selected date
+- Breaks for the staff (time-only, recurring daily)
 
 ### Slot Generation Process
 1. Read staff working hours for the selected day.
 2. Fetch all existing appointments for that staff on that date.
-3. Fetch all breaks for that staff on that date.
-4. Starting from the work start time, generate time ranges using the service duration.
-5. For each generated slot, check if it overlaps any appointment or break.
-6. Remove overlapping slots.
-7. Return the remaining slots as available.
+3. Fetch all breaks for that staff (breaks are stored as time-only strings, e.g., "13:00" to "14:00").
+4. Convert break time strings to date-time ranges for the specific date being checked.
+5. Filter breaks to only include those that overlap with working hours for that day.
+6. Starting from the work start time, generate time ranges using the service duration.
+7. For each generated slot, check if it fits within working hours.
+8. For each generated slot, check if it overlaps any appointment or converted break.
+9. Remove overlapping slots.
+10. Move to the next potential slot start time (current slot end time).
+11. Return the remaining slots as available.
+
+**Note:** Breaks are recurring daily time ranges (e.g., "13:00" to "14:00") that automatically apply to every day when the staff has working hours. They are converted to specific date-time ranges during availability calculation.
 
 ### Overlap Rule
 A slot overlaps an appointment (or break) if:
@@ -72,10 +78,18 @@ Existing appointments:
 - 13:30 – 14:20
 - 17:00 – 17:50
 
-Breaks:
-- 12:00 – 12:30
+Breaks (recurring daily):
+- 13:00 – 14:00 (applies to all days when staff has working hours)
 
-Available slots are all generated 50-minute time ranges that do not overlap the appointments or the break.
+For a specific date (e.g., 2026-01-23), the break "13:00 – 14:00" is converted to "2026-01-23T13:00:00.000Z – 2026-01-23T14:00:00.000Z" and blocks slots during that time.
+
+Available slots are all generated 50-minute time ranges that do not overlap the appointments or the converted break.
+
+**Example slot sequence:**
+- Slot 1: 09:00 – 09:50 (50 min service)
+- Slot 2: 10:00 – 10:50 (blocked by appointment)
+- Slot 3: 11:00 – 11:50 (50 min service)
+- ... and so on
 
 ### Where This Logic Runs
 Responsibility | Location
@@ -99,7 +113,7 @@ Availability uses:
 - `User.workingHours` for staff schedules
 - `Service.duration` for slot length (summed when multiple services are requested)
 - `Appointment` records for booked time
-- `Break` records for staff downtime
+- `Break` records for recurring daily staff downtime (stored as time-only strings, e.g., "13:00" to "14:00")
 
 ---
 
@@ -142,18 +156,19 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
       return next(errorHandler(400, "Invalid staffId or serviceId"));
     }
 
-    const dateOnly = parseDateOnly(dateStr);
-    if (!dateOnly) {
+    const dateOnlyUTC = parseNairobiDateToUTC(dateStr);
+    if (!dateOnlyUTC) {
       return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
     }
 
-    const todayStart = startOfToday();
-    if (dateOnly < todayStart) {
-      return res.status(200).json({
+    const todayStartNairobiUTC = startOfTodayNairobiUTC();
+    if (dateOnlyUTC.getTime() < todayStartNairobiUTC.getTime()) {
+      res.status(200).json({
         success: true,
         message: "date has passed",
         data: { slots: [] }
       });
+      return;
     }
 
     const staff = await User.findById(staffIdStr).select("workingHours services");
@@ -162,11 +177,12 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
     }
 
     if (!staff.services || staff.services.length === 0) {
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         message: "No services assigned to staff",
         data: { slots: [] }
       });
+      return;
     }
 
     const staffServiceIds = staff.services.map((id) => id.toString());
@@ -180,63 +196,121 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
       return next(errorHandler(404, "One or more services not found"));
     }
 
-    const totalDuration = services.reduce((sum, item) => sum + item.duration, 0);
+    const totalDuration = services.reduce((sum, item) => sum + (item.duration || 0), 0);
 
-    const dayKey = getDayKey(dateOnly);
+    const dayKey = getDayKey(dateOnlyUTC);
     const workingRanges = staff.workingHours?.[dayKey as keyof typeof staff.workingHours] || [];
 
     if (!workingRanges || workingRanges.length === 0) {
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         message: "No working hours for this day",
         data: { slots: [] }
       });
+      return;
     }
 
-    const { start, end } = buildDayRange(dateOnly);
+    const { start, end } = buildNairobiDayRangeUTC(dateOnlyUTC);
 
     const appointments = await Appointment.find({
       staffId: staffIdStr,
       startTime: { $lt: end },
-      endTime: { $gt: start }
+      endTime: { $gt: start },
+      status: { $in: ["CONFIRMED", "COMPLETED"] }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    // Fetch all breaks for the staff (time-only strings) - include reason
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime reason");
+    
+    // Convert break time strings to date-time ranges for this specific date
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          // Check if break overlaps with any working hour range
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
+
+    // Store break info with reason for response
+    const breakInfo = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        if (!isWithinHours) return null;
+        
+        return {
+          start: breakStart,
+          end: breakEnd,
+          reason: breakItem.reason
+        };
+      })
+      .filter((breakItem): breakItem is { start: Date; end: Date; reason: string | undefined } => breakItem !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
-    const { availableSlots } = computeSlots(workingRanges, dateOnly, totalDuration, events);
-    const now = new Date();
+    const { availableSlots } = computeSlots(workingRanges, dateOnlyUTC, totalDuration, events);
+    const nowUTC = new Date();
     const filteredSlots =
-      dateOnly.getTime() === todayStart.getTime()
-        ? availableSlots.filter((slot) => slot.end > now)
+      dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
+        ? availableSlots.filter((slot) => slot.end.getTime() > nowUTC.getTime())
         : availableSlots;
 
-    if (filteredSlots.length === 0 && dateOnly.getTime() === todayStart.getTime()) {
-      return res.status(200).json({
+    if (filteredSlots.length === 0 && dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()) {
+      res.status(200).json({
         success: true,
         message: "time has passed",
         data: { slots: [] }
       });
+      return;
     }
+
+    // Combine slots and breaks, then sort by startTime
+    const timeline = [
+      ...filteredSlots.map((slot) => ({
+        type: "available" as const,
+        startTime: slot.start,
+        endTime: slot.end
+      })),
+      ...breakInfo.map((breakItem) => ({
+        type: "break" as const,
+        startTime: breakItem.start,
+        endTime: breakItem.end,
+        reason: breakItem.reason
+      }))
+    ].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
     res.status(200).json({
       success: true,
       data: {
-        slots: filteredSlots.map((slot) => ({
-          startTime: slot.start,
-          endTime: slot.end
-        }))
+        slots: timeline
       }
     });
   } catch (error: any) {
+    console.error("Get available slots error:", error);
     next(errorHandler(500, "Server error while calculating availability"));
   }
 };
@@ -251,7 +325,11 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
 
 **Controller Implementation:**
 ```typescript
-export const getDayAvailability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getDayAvailability = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const { staffId, serviceId, date } = req.query;
 
@@ -267,14 +345,14 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
       return next(errorHandler(400, "Invalid staffId or serviceId"));
     }
 
-    const dateOnly = parseDateOnly(dateStr);
-    if (!dateOnly) {
+    const dateOnlyUTC = parseNairobiDateToUTC(dateStr);
+    if (!dateOnlyUTC) {
       return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
     }
 
-    const todayStart = startOfToday();
-    if (dateOnly < todayStart) {
-      return res.status(200).json({
+    const todayStartNairobiUTC = startOfTodayNairobiUTC();
+    if (dateOnlyUTC.getTime() < todayStartNairobiUTC.getTime()) {
+      res.status(200).json({
         success: true,
         message: "date has passed",
         data: {
@@ -283,6 +361,7 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
           availableSlots: 0
         }
       });
+      return;
     }
 
     const staff = await User.findById(staffIdStr).select("workingHours services");
@@ -291,7 +370,7 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
     }
 
     if (!staff.services || staff.services.length === 0) {
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         message: "No services assigned to staff",
         data: {
@@ -300,6 +379,7 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
           availableSlots: 0
         }
       });
+      return;
     }
 
     const staffServiceIds = staff.services.map((id) => id.toString());
@@ -313,13 +393,13 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
       return next(errorHandler(404, "One or more services not found"));
     }
 
-    const totalDuration = services.reduce((sum, item) => sum + item.duration, 0);
+    const totalDuration = services.reduce((sum, item) => sum + (item.duration || 0), 0);
 
-    const dayKey = getDayKey(dateOnly);
+    const dayKey = getDayKey(dateOnlyUTC);
     const workingRanges = staff.workingHours?.[dayKey as keyof typeof staff.workingHours] || [];
 
     if (!workingRanges || workingRanges.length === 0) {
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         message: "No working hours for this day",
         data: {
@@ -328,42 +408,61 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
           availableSlots: 0
         }
       });
+      return;
     }
 
-    const { start, end } = buildDayRange(dateOnly);
+    const { start, end } = buildNairobiDayRangeUTC(dateOnlyUTC);
 
     const appointments = await Appointment.find({
       staffId: staffIdStr,
       startTime: { $lt: end },
-      endTime: { $gt: start }
+      endTime: { $gt: start },
+      status: { $in: ["CONFIRMED", "COMPLETED"] }
     }).select("startTime endTime");
 
-    const breaks = await BreakModel.find({
-      staffId: staffIdStr,
-      startTime: { $lt: end },
-      endTime: { $gt: start }
-    }).select("startTime endTime");
+    // Fetch all breaks for the staff (time-only strings)
+    const breaks = await BreakModel.find({ staffId: staffIdStr }).select("startTime endTime");
+    
+    // Convert break time strings to date-time ranges for this specific date
+    const breakEvents: TimeRange[] = breaks
+      .map((breakItem) => {
+        const breakStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.startTime);
+        const breakEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, breakItem.endTime);
+        if (!breakStart || !breakEnd) return null;
+        
+        // Only include breaks that fall within working hours for this day
+        const isWithinHours = workingRanges.some((range) => {
+          const rangeStart = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.start);
+          const rangeEnd = combineNairobiDateAndTimeToUTC(dateOnlyUTC, range.end);
+          if (!rangeStart || !rangeEnd) return false;
+          // Check if break overlaps with any working hour range
+          return breakStart < rangeEnd && breakEnd > rangeStart;
+        });
+        
+        return isWithinHours ? { start: breakStart, end: breakEnd } : null;
+      })
+      .filter((event): event is TimeRange => event !== null);
 
     const events: TimeRange[] = [
       ...appointments.map((item) => ({ start: item.startTime, end: item.endTime })),
-      ...breaks.map((item) => ({ start: item.startTime, end: item.endTime }))
+      ...breakEvents
     ];
 
     const { totalSlots, availableSlots } = computeSlots(
       workingRanges,
-      dateOnly,
+      dateOnlyUTC,
       totalDuration,
       events
     );
 
-    const now = new Date();
+    const nowUTC = new Date();
     const filteredSlots =
-      dateOnly.getTime() === todayStart.getTime()
-        ? availableSlots.filter((slot) => slot.end > now)
+      dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()
+        ? availableSlots.filter((slot) => slot.end.getTime() > nowUTC.getTime())
         : availableSlots;
 
-    if (filteredSlots.length === 0 && dateOnly.getTime() === todayStart.getTime()) {
-      return res.status(200).json({
+    if (filteredSlots.length === 0 && dateOnlyUTC.getTime() === todayStartNairobiUTC.getTime()) {
+      res.status(200).json({
         success: true,
         message: "time has passed",
         data: {
@@ -372,6 +471,7 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
           availableSlots: 0
         }
       });
+      return;
     }
 
     res.status(200).json({
@@ -383,6 +483,7 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
       }
     });
   } catch (error: any) {
+    console.error("Get day availability error:", error);
     next(errorHandler(500, "Server error while fetching day availability"));
   }
 };
@@ -397,59 +498,6 @@ export const getDayAvailability = async (req: Request, res: Response, next: Next
 ```typescript
 GET  /slots   // Available slots for staff + service + date
 GET  /day     // Day availability summary
-```
-
-### Router Implementation
-
-**File:** `src/routes/availabilityRoutes.ts`
-
-```typescript
-import express from "express";
-import { getAvailableSlots, getDayAvailability } from "../controllers/availabilityController";
-
-const router = express.Router();
-
-router.get("/slots", getAvailableSlots);
-router.get("/day", getDayAvailability);
-
-export default router;
-```
-
-### Route Details
-
-#### `GET /api/availability/slots`
-**Query:** `staffId`, `serviceId`, `date`  
-**Notes:**
-- Multiple services are supported by repeating `serviceId` in the query string.
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "slots": [
-      { "startTime": "2026-01-23T09:00:00.000Z", "endTime": "2026-01-23T09:50:00.000Z" }
-    ]
-  }
-}
-```
-
-**Example (multiple services):**
-```
-/api/availability/slots?staffId=<staffId>&serviceId=<serviceId1>&serviceId=<serviceId2>&date=2026-01-23
-```
-
-#### `GET /api/availability/day`
-**Query:** `staffId`, `serviceId`, `date`  
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "date": "2026-01-23",
-    "totalSlots": 18,
-    "availableSlots": 15
-  }
-}
 ```
 
 ---
@@ -500,16 +548,20 @@ Common responses:
 - `"No services assigned to staff"` when staff has no services
 - `"Staff does not provide requested services"` when a requested service is not assigned
 
+**Booking Validation Messages (from `checkSlotAvailability`):**
+- `"Appointment time is outside working hours"` when slot doesn't fit within working hours
+- `"Appointment time is not available"` when the slot conflicts with other appointments or breaks
+
 ---
 
 ## 📊 Database Indexes
 
 ```typescript
 appointmentSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
-breakSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
+breakSchema.index({ staffId: 1 });
 ```
 
 ---
 
-**Last Updated:** January 2026  
-**Version:** 1.0.0
+**Last Updated:** March 2026  
+**Version:** 1.1.0

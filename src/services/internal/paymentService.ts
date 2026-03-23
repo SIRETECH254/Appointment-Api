@@ -49,6 +49,7 @@ export const createPaymentRecord = async (params: CreatePaymentRecordParams): Pr
 
   const payment = await Payment.create({
     paymentNumber,
+    customerId: params.customer?._id,
     appointmentId: params.appointment?._id || null,
     amount: params.amount,
     method: params.method,
