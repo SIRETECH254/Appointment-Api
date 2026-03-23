@@ -37,7 +37,7 @@
   "mongoose": "^8.18.3",
   "multer": "^2.0.2",
   "multer-storage-cloudinary": "^4.0.0",
-  "nodemailer": "^7.0.6",
+  "@sendgrid/mail": "^8.1.4",
   "socket.io": "^4.8.1",
   "swagger-jsdoc": "^6.2.8",
   "swagger-ui-express": "^5.0.1",
@@ -766,7 +766,7 @@ appointment-api/
 │   ├── services/
 │   │   ├── external/
 │   │   │   ├── darajaService.ts   # M-Pesa/Daraja integration
-│   │   │   ├── emailService.ts    # Nodemailer email sending
+│   │   │   ├── emailService.ts    # SendGrid email sending
 │   │   │   ├── paystackService.ts # Paystack integration
 │   │   │   └── smsService.ts      # Africa's Talking SMS
 │   │   └── internal/
@@ -898,7 +898,7 @@ AFRICAS_TALKING_USERNAME=your_username
    - M-Pesa for mobile money
    - Card payments via provider
 2. Communication
-   - Email via Nodemailer
+   - Email via SendGrid
    - SMS via Africa's Talking
    - Push via mobile provider (if enabled)
 3. Background Jobs
