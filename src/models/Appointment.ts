@@ -3,6 +3,11 @@ import type { IAppointment } from "../types/index";
 
 const appointmentSchema = new Schema<IAppointment>(
   {
+    appointmentNumber: {
+      type: String,
+      unique: true,
+      required: [true, "Appointment number is required"]
+    },
     customerId: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -56,6 +61,7 @@ const appointmentSchema = new Schema<IAppointment>(
   { timestamps: true }
 );
 
+appointmentSchema.index({ appointmentNumber: 1 });
 appointmentSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
 appointmentSchema.index({ customerId: 1, startTime: 1 });
 appointmentSchema.index({ services: 1 });

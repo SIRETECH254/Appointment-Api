@@ -10,6 +10,7 @@ import {
 } from "../services/internal/paymentService";
 import { createInAppNotification } from "../utils/notificationHelper";
 import { checkSlotAvailability } from "../utils/availability";
+import { generateAppointmentNumber } from "../utils/appointmentUtils";
 import { errorHandler } from "../middleware/errorHandler";
 
 const calculateBookingFee = (totalAmount: number, feeType: string, feeValue: number): number => {
@@ -69,7 +70,8 @@ export const createAppointment = async (req: Request, res: Response, next: NextF
       endTime,
       bookingFeeAmount,
       remainingAmount,
-      status: "PENDING"
+      status: "PENDING",
+      appointmentNumber: generateAppointmentNumber()
     });
 
     const populatedAppointment = await Appointment.findById(appointment._id)
@@ -166,7 +168,8 @@ export const createAppointmentAdmin = async (req: Request, res: Response, next: 
       endTime,
       bookingFeeAmount,
       remainingAmount,
-      status: "PENDING"
+      status: "PENDING",
+      appointmentNumber: generateAppointmentNumber()
     });
 
     const populatedAppointment = await Appointment.findById(appointment._id)

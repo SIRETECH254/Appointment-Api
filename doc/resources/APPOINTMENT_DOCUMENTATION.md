@@ -27,6 +27,7 @@ Statuses flow through: **PENDING → CONFIRMED → COMPLETED**, with **CANCELLED
 ```typescript
 interface IAppointment {
   _id: ObjectId;
+  appointmentNumber: string;
   customerId: ObjectId;
   staffId: ObjectId;
   services: ObjectId[];
@@ -52,6 +53,11 @@ import type { IAppointment } from "../types/index";
 
 const appointmentSchema = new Schema<IAppointment>(
   {
+    appointmentNumber: {
+      type: String,
+      unique: true,
+      required: true
+    },
     customerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     staffId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     services: [{ type: Schema.Types.ObjectId, ref: "Service", required: true }],
@@ -79,6 +85,7 @@ const appointmentSchema = new Schema<IAppointment>(
 
 ### Validation Rules
 ```typescript
+appointmentNumber: { required: true, unique: true, generated: true }
 customerId: { required: true, ref: "User" }
 staffId:    { required: true, ref: "User" }
 services:   { required: true, ref: "Service", minItems: 1 }
@@ -868,6 +875,7 @@ export default router;
   "data": {
     "appointment": {
       "id": "...",
+      "appointmentNumber": "APT-20260324-1234",
       "customerId": {
         "id": "...",
         "firstName": "Jane",
@@ -917,6 +925,7 @@ export default router;
   "data": {
     "appointment": {
       "id": "...",
+      "appointmentNumber": "APT-20260324-1234",
       "customerId": {
         "id": "...",
         "firstName": "Jane",
@@ -1114,6 +1123,7 @@ export default router;
   "data": {
     "appointment": {
       "id": "...",
+      "appointmentNumber": "APT-20260324-1234",
       "customerId": { "id": "...", "firstName": "Jane", "lastName": "Customer" },
       "staffId": { "id": "...", "firstName": "John", "lastName": "Staff" },
       "services": [
@@ -1238,6 +1248,7 @@ Common responses:
 ## 📊 Database Indexes
 
 ```typescript
+appointmentSchema.index({ appointmentNumber: 1 });
 appointmentSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
 appointmentSchema.index({ customerId: 1, startTime: 1 });
 appointmentSchema.index({ services: 1 });

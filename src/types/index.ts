@@ -26,6 +26,7 @@ export interface IService extends Document {
 
 export interface IAppointment extends Document {
   _id: Types.ObjectId;
+  appointmentNumber: string;
   customerId: Types.ObjectId;
   staffId: Types.ObjectId;
   services: Types.ObjectId[];
