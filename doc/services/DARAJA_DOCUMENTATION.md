@@ -3,8 +3,8 @@
 ## 📋 Table of Contents
 - [Daraja Overview](#daraja-overview)
 - [Configuration](#configuration)
-- [Key Functions/Service Methods](#key-functionsservice-methods)
-- [Usage in Internal Services](#usage-in-internal-services)
+- [External Services](#external-services)
+- [Internal Services](#internal-services)
 - [Usage in Controllers](#usage-in-controllers)
 - [Callbacks and Webhooks](#callbacks-and-webhooks)
 - [Error Handling](#error-handling)
@@ -26,7 +26,7 @@ Daraja is the API gateway for M-Pesa, a mobile money transfer service in Kenya. 
 
 ## Configuration
 
-Daraja API credentials and settings are managed through environment variables and configured in `src/services/external/darajaService.ts`.
+Daraja API credentials and settings are managed through environment variables. These are consumed by `src/services/external/darajaService.ts` to authenticate with Safaricom and handle transaction callbacks.
 
 **Environment Variables:**
 -   `MPESA_ENV`: `sandbox` or `production`. Determines the base URL for Daraja API.
@@ -34,123 +34,23 @@ Daraja API credentials and settings are managed through environment variables an
 -   `MPESA_CONSUMER_SECRET`: Your M-Pesa app consumer secret.
 -   `MPESA_SHORT_CODE`: The M-Pesa Pay Bill or Buy Goods short code.
 -   `MPESA_PASSKEY`: The M-Pesa STK Push Passkey.
--   `CALLBACK_URL`: The base URL of your API server (e.g., `https://appointment-api-zlfq.onrender.com`). The webhook route path (`/api/payments/webhooks/mpesa`) is automatically appended to construct the full callback URL. This must be publicly accessible.
-
-**File: `src/services/external/darajaService.ts` - Configuration Snippet**
-```typescript
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME as string,
-  api_key: process.env.CLOUDINARY_API_KEY as string,
-  api_secret: process.env.CLOUDINARY_API_SECRET as string
-});
-```
-*(Note: The above snippet is for Cloudinary configuration. Daraja's internal configuration happens via environment variables directly consumed by the service functions.)*
+-   `CALLBACK_URL` or `API_BASE_URL`: The base URL of your API server used to construct the webhook endpoint (`/api/payments/webhooks/mpesa`).
 
 ---
 
-## Key Functions/Service Methods
+## External Services
 
-The `src/services/external/darajaService.ts` file provides the core functions for interacting with the Daraja API.
-
-**`getAccessToken`**
-Fetches an OAuth access token required for authenticating subsequent Daraja API calls.
-```typescript
-export const getAccessToken = async (forceRefresh: boolean = false): Promise<string> => {
-  const consumerKey = (process.env.MPESA_CONSUMER_KEY || "").trim();
-  const consumerSecret = (process.env.MPESA_CONSUMER_SECRET || "").trim();
-
-  if (!consumerKey || !consumerSecret) {
-    throw new Error("Daraja credentials not configured: Missing MPESA_CONSUMER_KEY or MPESA_CONSUMER_SECRET");
-  }
-
-  const base = getBaseUrl();
-  const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
-
-  try {
-    const response = await axios.get(`${base}/oauth/v1/generate?grant_type=client_credentials`, {
-      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" }
-    });
-
-    if (!response.data?.access_token) {
-      throw new Error("Daraja OAuth response missing access_token");
-    }
-
-    return response.data.access_token;
-  } catch (err: any) {
-    const status = err?.response?.status;
-    const data = err?.response?.data;
-    const message = `Daraja OAuth failed${status ? ` (HTTP ${status})` : ""}`;
-    const details = typeof data === "object" ? JSON.stringify(data) : data || err.message;
-    throw new Error(`${message}: ${details}`);
-  }
-};
-```
-
-**`normalizePhoneNumber`**
-Helper function to convert various Kenyan phone number formats (e.g., 07..., +2547...) into the 254XXXXXXXXX format required by Daraja.
-```typescript
-export const normalizePhoneNumber = (phone: string): string => {
-  // Remove all non-digit characters
-  const digitsOnly = String(phone).replace(/[^0-9]/g, "");
-  let msisdn = digitsOnly;
-
-  // If starts with 0, replace with 254
-  if (msisdn.startsWith("0")) {
-    msisdn = `254${msisdn.slice(1)}`;
-  }
-
-  // If doesn't start with 254, check if original had 254
-  if (!msisdn.startsWith("254")) {
-    if (digitsOnly.startsWith("254")) {
-      msisdn = digitsOnly;
-    } else {
-      // If it's a 9-digit number, assume it's missing the 254 prefix
-      if (digitsOnly.length === 9) {
-        msisdn = `254${digitsOnly}`;
-      }
-    }
-  }
-
-  // Validate format: 254 followed by 9 digits
-  if (!/^254\d{9}$/.test(msisdn)) {
-    throw new Error(`Invalid Kenyan phone format. Expected format: 254XXXXXXXXX, received: ${phone}`);
-  }
-
-  return msisdn;
-};
-```
+The `src/services/external/darajaService.ts` file provides the core functions for direct interaction with the Safaricom Daraja API.
 
 **`initiateStkPush`**
-Initiates an M-Pesa STK Push transaction on the user's phone. The callback URL is automatically constructed by appending the webhook route path (`/api/payments/webhooks/mpesa`) to the base URL from `CALLBACK_URL` environment variable.
-
-**Note:** The callback URL is constructed as: `${CALLBACK_URL}/api/payments/webhooks/mpesa`. Ensure `CALLBACK_URL` is set to your API base URL (e.g., `https://appointment-api-zlfq.onrender.com`).
+Handles the STK Push request payload and communication with Safaricom.
 
 ```typescript
 export const initiateStkPush = async (params: StkPushParams): Promise<StkPushResponse> => {
-  const shortCode = process.env.MPESA_SHORT_CODE;
-  const passkey = process.env.MPESA_PASSKEY;
-  const baseUrl = (process.env.CALLBACK_URL || "").trim();
-  const callbackUrl = baseUrl ? `${baseUrl}/api/payments/webhooks/mpesa` : "";
-  const partyB = shortCode;
-
-  console.log("Base URL:", baseUrl);
-  console.log("Callback URL:", callbackUrl);
-
-  if (!shortCode || !passkey) {
-    throw new Error("Daraja short code or passkey not configured");
-  }
-
-  if (!callbackUrl) {
-    throw new Error("CALLBACK_URL is not configured");
-  }
-
   const accessToken = await getAccessToken();
   const base = getBaseUrl();
   const timestamp = buildTimestamp();
   const password = buildPassword(shortCode, passkey, timestamp);
-
-  // Normalize phone number to 254XXXXXXXXX format
-  const normalizedPhone = normalizePhoneNumber(params.phone);
 
   const payload = {
     BusinessShortCode: Number(shortCode),
@@ -158,152 +58,153 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
     Timestamp: timestamp,
     TransactionType: "CustomerPayBillOnline",
     Amount: Math.round(params.amount),
-    PartyA: normalizedPhone,
-    PartyB: Number(partyB),
-    PhoneNumber: normalizedPhone,
-    CallBackURL: callbackUrl,
+    PartyA: normalizePhoneNumber(params.phone),
+    PartyB: Number(shortCode),
+    PhoneNumber: normalizePhoneNumber(params.phone),
+    CallBackURL: `${process.env.CALLBACK_URL}/api/payments/webhooks/mpesa`,
     AccountReference: String(params.accountReference),
     TransactionDesc: "Appointment payment"
   };
 
-  try {
-    const resp = await axios.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }
-    });
+  const resp = await axios.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
 
-    return {
-      merchantRequestId: resp.data?.MerchantRequestID,
-      checkoutRequestId: resp.data?.CheckoutRequestID,
-      raw: resp.data
-    };
-  } catch (err: any) {
-    const status = err?.response?.status;
-    const data = err?.response?.data;
-    const message = `Daraja STK Push failed${status ? ` (HTTP ${status})` : ""}`;
-    const details = typeof data === "object" ? JSON.stringify(data) : data || err.message;
-    throw new Error(`${message}: ${details}`);
-  }
+  return {
+    merchantRequestId: resp.data?.MerchantRequestID,
+    checkoutRequestId: resp.data?.CheckoutRequestID,
+    raw: resp.data
+  };
 };
 ```
 
 **`parseCallback`**
-Parses the incoming Daraja callback (webhook) payload to extract relevant transaction details. Includes extensive logging for debugging purposes.
+Extracts transaction results and metadata from Daraja webhooks.
 
 ```typescript
 export const parseCallback = (body: any): CallbackParseResult => {
   const stk = body?.Body?.stkCallback || {};
-  if (!stk) return { valid: false, success: false };
-
-  const resultCode = stk.ResultCode;
-  // Handle resultCode as string or number (Daraja may return "0" or 0)
-  const success = String(resultCode) === "0";
+  const success = String(stk.ResultCode) === "0";
   const checkoutRequestId = stk.CheckoutRequestID;
-
-  let amount: number | undefined;
-  let phone: string | undefined;
   const items = stk?.CallbackMetadata?.Item || [];
 
-  console.log("===== PARSING DARAJA CALLBACK =====");
-  console.log("STK Callback:", JSON.stringify(stk, null, 2));
-  console.log("CallbackMetadata Items:", JSON.stringify(items, null, 2));
-  console.log("Result Code:", resultCode);
-  console.log("====================================");
-
+  let amount, phone;
   for (const item of items) {
     if (item?.Name === "Amount") amount = item?.Value;
     if (item?.Name === "PhoneNumber") phone = item?.Value;
   }
 
-  return {
-    valid: true,
-    success,
-    checkoutRequestId,
-    amount,
-    phone,
-    raw: body,
-    stk
-  };
+  return { valid: !!stk, success, checkoutRequestId, amount, phone, raw: body };
 };
 ```
 
 **`queryStkPushStatus`**
-Queries the status of a previously initiated STK Push transaction using its `checkoutRequestId`.
+Checks the current status of an STK Push transaction using its `checkoutRequestId`.
+
 ```typescript
 export const queryStkPushStatus = async (params: StkQueryParams): Promise<StkQueryResponse> => {
-  const resolvedShortCode = (params.shortCode || process.env.MPESA_SHORT_CODE || "").trim();
-  const resolvedPasskey = (params.passkey || process.env.MPESA_PASSKEY || "").trim();
-
-  if (!resolvedShortCode || !resolvedPasskey) {
-    throw new Error("Daraja short code or passkey not configured");
-  }
-
   const accessToken = await getAccessToken();
   const base = getBaseUrl();
   const timestamp = buildTimestamp();
-  const password = buildPassword(resolvedShortCode, resolvedPasskey, timestamp);
+  const password = buildPassword(shortCode, passkey, timestamp);
 
-  try {
-    const resp = await axios.post(
-      `${base}/mpesa/stkpushquery/v1/query`,
-      {
-        BusinessShortCode: Number(resolvedShortCode),
-        Password: password,
-        Timestamp: timestamp,
-        CheckoutRequestID: params.checkoutRequestId
-      },
-      { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
-    );
+  const resp = await axios.post(`${base}/mpesa/stkpushquery/v1/query`, {
+    BusinessShortCode: Number(shortCode),
+    Password: password,
+    Timestamp: timestamp,
+    CheckoutRequestID: params.checkoutRequestId
+  }, { headers: { Authorization: `Bearer ${accessToken}` } });
 
-    return {
-      ok: true,
-      resultCode: resp.data?.ResultCode,
-      resultDesc: resp.data?.ResultDesc,
-      raw: resp.data
-    };
-  } catch (err: any) {
-    const status = err?.response?.status;
-    const data = err?.response?.data;
-    return {
-      ok: false,
-      error: `Daraja STK Query failed\${status ? ` (HTTP \${status})` : ""}`,
-      details: typeof data === "object" ? JSON.stringify(data) : data || err.message
-    };
-  }
+  return { ok: true, resultCode: resp.data?.ResultCode, resultDesc: resp.data?.ResultDesc, raw: resp.data };
 };
 ```
 
 ---
 
-## Usage in Internal Services
+## Internal Services
 
-The internal payment service (`src/services/internal/paymentService.ts`) utilizes Daraja functions to initiate and manage M-Pesa transactions.
+The internal payment service (`src/services/internal/paymentService.ts`) orchestrates M-Pesa payments within the application's business logic.
 
-**File: `src/services/internal/paymentService.ts` - Snippets**
+**`initiateMpesaForAppointment`**
+Initiates payment for an appointment and links the transaction to the appointment record.
 
 ```typescript
-import { initiateStkPush } from "../external/darajaService";
+export const initiateMpesaForAppointment = async (params: InitiateMpesaParams): Promise<any> => {
+  const { appointment, payment, amount, phone } = params;
+  const accountReference = appointment._id.toString();
 
-// ... inside initiateMpesaForAppointment function
-const res = await initiateStkPush({
-  appointment,
-  payment,
-  amount: bookingFeeAmount,
-  phone
-});
+  const res = await initiateStkPush({ amount, phone, accountReference });
 
-// ... inside initiateMpesaForService function
-const res = await initiateStkPush({
-  payment,
-  amount: totalAmount,
-  phone
-});
+  payment.status = "PENDING";
+  payment.processorRefs.daraja = {
+    merchantRequestId: res.merchantRequestId,
+    checkoutRequestId: res.checkoutRequestId
+  };
+  await payment.save();
+
+  return res;
+};
+```
+
+**`initiateMpesaForService`**
+Handles M-Pesa initiation for service-only payments (no specific appointment).
+
+```typescript
+export const initiateMpesaForService = async (params: InitiateMpesaForServiceParams): Promise<any> => {
+  const { payment, amount, phone } = params;
+  const accountReference = `SRV-${payment._id}-${Date.now()}`;
+
+  const res = await initiateStkPush({ amount, phone, accountReference });
+
+  payment.status = "PENDING";
+  payment.processorRefs.daraja = {
+    merchantRequestId: res.merchantRequestId,
+    checkoutRequestId: res.checkoutRequestId
+  };
+  await payment.save();
+
+  return res;
+};
+
+```
+
+**`applySuccessfulPayment`**
+Processes a successful payment, updating the payment status and related appointment details (e.g., remaining amount, status).
+
+```typescript
+export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParams): Promise<any> => {
+  const { appointment, payment, io } = params;
+
+  payment.status = "SUCCESS";
+  await payment.save();
+
+  if (appointment) {
+    if (payment.type === "FULL_PAYMENT") {
+      appointment.remainingAmount = 0;
+      if (appointment.status === "PENDING") appointment.status = "CONFIRMED";
+    }
+
+    if (payment.type === "BOOKING_FEE" && appointment.status === "PENDING") {
+      appointment.status = "CONFIRMED";
+    }
+
+    await appointment.save();
+    if (io) {
+      io.emit("payment.updated", { paymentId: payment._id.toString(), status: "SUCCESS" });
+      io.emit("appointment.updated", { appointmentId: appointment._id.toString(), status: appointment.status });
+    }
+  }
+
+  return { payment, appointment };
+};
+```
 ```
 
 ---
 
 ## Usage in Controllers
 
-The payment controller (`src/controllers/paymentController.ts`) directly handles M-Pesa webhooks and allows checking of STK Push status.
+The payment controller (`src/controllers/paymentController.ts`) handles M-Pesa webhooks and status checks.
 
 **File: `src/controllers/paymentController.ts` - Snippets**
 
@@ -321,101 +222,19 @@ const statusResult = await queryStkPushStatus({ checkoutRequestId });
 
 ## Callbacks and Webhooks
 
-The Daraja API relies on callbacks (webhooks) to notify the application of transaction outcomes. The `mpesaWebhook` controller function (`src/controllers/paymentController.ts`) is configured as the `CallBackURL` for STK Push transactions.
+The Daraja API relies on callbacks (webhooks) to notify the application of transaction outcomes. The `mpesaWebhook` controller function is configured as the `CallBackURL` for STK Push transactions.
 
-**File: `src/controllers/paymentController.ts` - `mpesaWebhook` function**
-
-The webhook handler includes extensive logging for debugging webhook reception and processing. All logs are prefixed with emoji indicators for easy identification:
-- `=====` - Webhook received indicator
-- `✅` - Success indicators
-- `❌` - Error/failure indicators
-- `🔍` - Lookup/search operations
-- `📅` - Appointment-related operations
-- `💳` - Payment processing
-
-```typescript
-export const mpesaWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const io = req.app.get("io");
-    const payload = req.body;
-
-    // Log the full payload for debugging
-    console.log('===== M-PESA WEBHOOK RECEIVED =====');
-    console.log('Full payload:', JSON.stringify(payload, null, 2));
-    console.log('Body.stkCallback:', JSON.stringify(payload?.Body?.stkCallback, null, 2));
-    console.log('CallbackMetadata:', JSON.stringify(payload?.Body?.stkCallback?.CallbackMetadata, null, 2));
-    console.log('====================================');
-
-    if (payload?.Body?.stkCallback) {
-      io?.emit("callback.received", {
-        message: payload?.Body?.stkCallback.ResultDesc,
-        code: payload?.Body?.stkCallback.ResultCode
-      });
-    }
-
-    const parsed = parseCallback(payload);
-    console.log('Parsed callback result:', JSON.stringify(parsed, null, 2));
-    console.log('this is daraja callback');
-    
-    if (!parsed.valid || !parsed.checkoutRequestId) {
-      console.log('❌ Invalid payload or missing checkoutRequestId');
-      res.status(200).json({ success: false });
-      return;
-    }
-
-    console.log('🔍 Looking for payment with checkoutRequestId:', parsed.checkoutRequestId);
-    const payment = await Payment.findOne({ "processorRefs.daraja.checkoutRequestId": parsed.checkoutRequestId });
-    if (!payment) {
-      console.log('❌ Payment not found for checkoutRequestId:', parsed.checkoutRequestId);
-      res.status(200).json({ success: false });
-      return;
-    }
-
-    console.log('✅ Payment found:', payment._id.toString(), 'Status:', payment.status);
-
-    if (!parsed.success) {
-      console.log('❌ Payment failed. ResultCode:', payload?.Body?.stkCallback?.ResultCode);
-      payment.status = "FAILED";
-      await payment.save();
-      res.status(200).json({ success: true });
-      return;
-    }
-
-    payment.transactionRef = parsed.checkoutRequestId;
-    console.log('✅ Payment successful. Processing payment...');
-    
-    if (payment.appointmentId) {
-      console.log('📅 Payment linked to appointment:', payment.appointmentId);
-      const appointment = await Appointment.findById(payment.appointmentId);
-      if (!appointment) {
-        console.log('❌ Appointment not found:', payment.appointmentId);
-        res.status(200).json({ success: false });
-        return;
-      }
-      await applySuccessfulPayment({ appointment, payment, io });
-      console.log('✅ Payment applied to appointment successfully');
-    } else {
-      console.log('💳 Service-only payment (no appointment)');
-      await applySuccessfulPayment({ appointment: null, payment, io });
-      console.log('✅ Service payment processed successfully');
-    }
-    
-    console.log('✅ Webhook processing completed successfully');
-    res.status(200).json({ success: true });
-  } catch (error: any) {
-    console.error('❌ ERROR in M-Pesa webhook handler:', error);
-    console.error('Error stack:', error.stack);
-    console.error('Request body:', JSON.stringify(req.body, null, 2));
-    next(errorHandler(500, "Server error while processing M-Pesa webhook"));
-  }
-};
-```
+All webhook processing is logged with indicators:
+- `✅` - Success
+- `❌` - Error/Failure
+- `🔍` - Database Lookup
+- `💳` - Payment Processing
 
 ---
 
 ## Error Handling
 
-All Daraja service functions are wrapped in `try-catch` blocks to handle API errors and network issues. Custom error messages are generated to provide informative feedback. The `errorHandler` middleware is used to standardize error responses.
+Daraja service functions use `try-catch` blocks with custom error reporting. API failures include HTTP status codes and raw error details when available.
 
 ---
 
@@ -424,38 +243,21 @@ All Daraja service functions are wrapped in `try-catch` blocks to handle API err
 **Initiate M-Pesa Payment (Service-Only)**
 
 ```bash
-curl -X POST http://localhost:4500/api/payments/initiate 
-  -H "Authorization: Bearer <token>" 
-  -H "Content-Type: application/json" 
-  -d '{
-    "services": ["<serviceId1>", "<serviceId2>"],
-    "method": "MPESA",
-    "phone": "+2547XXXXXXXX"
-  }'
-```
-
-**Initiate M-Pesa Payment (For Remaining Appointment Amount)**
-
-```bash
-curl -X POST http://localhost:4500/api/payments/service-payment 
-  -H "Authorization: Bearer <token>" 
-  -H "Content-Type: application/json" 
-  -d '{
-    "appointmentId": "<appointmentId>",
-    "method": "MPESA",
-    "phone": "+2547XXXXXXXX"
-  }'
+curl -X POST http://localhost:4500/api/payments/initiate \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "services": ["<serviceId1>"], "method": "MPESA", "phone": "2547XXXXXXXX" }'
 ```
 
 **Check M-Pesa STK Push Status**
 
 ```bash
-curl -X GET http://localhost:4500/api/payments/status/<checkoutRequestId> 
+curl -X GET http://localhost:4500/api/payments/status/<checkoutRequestId> \
   -H "Authorization: Bearer <token>"
 ```
 
 ---
 
-**Last Updated:** February 2026
-**Version:** 1.0.0
+**Last Updated:** April 2026
+**Version:** 1.1.0
 **Maintainer:** Appointment API Development Team
