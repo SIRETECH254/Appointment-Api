@@ -61,7 +61,6 @@ const appointmentSchema = new Schema<IAppointment>(
   { timestamps: true }
 );
 
-appointmentSchema.index({ appointmentNumber: 1 });
 appointmentSchema.index({ staffId: 1, startTime: 1, endTime: 1 });
 appointmentSchema.index({ customerId: 1, startTime: 1 });
 appointmentSchema.index({ services: 1 });
