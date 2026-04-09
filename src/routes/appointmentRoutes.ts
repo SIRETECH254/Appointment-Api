@@ -10,17 +10,17 @@
  * @swagger
  * components:
  *   schemas:
- Appointment:
-   type: object
-   properties:
-     _id:
-       type: string
-       description: The unique identifier for the appointment.
-     appointmentNumber:
-       type: string
-       description: The unique appointment number (e.g., APT-20260324-1234).
-     customerId:
-       type: string
+ *     Appointment:
+ *       type: object
+ *       properties:
+ *         _id:
+ *           type: string
+ *           description: The unique identifier for the appointment.
+ *         appointmentNumber:
+ *           type: string
+ *           description: The unique appointment number (e.g., APT-20260324-1234).
+ *         customerId:
+ *           type: string
  *           description: The ID of the customer who booked the appointment.
  *         staffId:
  *           type: string

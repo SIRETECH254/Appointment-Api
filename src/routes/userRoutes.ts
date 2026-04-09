@@ -457,6 +457,24 @@ router.get("/:userId", authenticateToken, authorizeRoles(["admin"]), getUserById
  *               email:
  *                 type: string
  *                 format: email
+ *               roles:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of role names to assign (e.g., ['staff', 'admin']).
+ *               isActive:
+ *                 type: boolean
+ *               address:
+ *                 type: string
+ *               city:
+ *                 type: string
+ *               country:
+ *                 type: string
+ *               services:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of service IDs to assign to the staff.
  *               avatar:
  *                 type: string
  *                 format: uri

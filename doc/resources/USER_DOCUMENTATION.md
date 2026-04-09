@@ -523,8 +523,10 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 **Validation:**
 - User must exist
 - Email format and uniqueness (if provided)
- - `workingHours` must be an object if provided
-**Process:** Update profile fields and save  
+- `workingHours` must be an object if provided
+- `roles` must be an array of valid role names if provided
+- `services` must be an array of service IDs if provided
+**Process:** Update profile fields, roles, services, and status, then save  
 **Response:** Updated user
 
 **Controller Implementation:**
@@ -532,7 +534,20 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    const { firstName, lastName, phone, email, avatar, workingHours } = req.body;
+    const {
+      firstName,
+      lastName,
+      phone,
+      email,
+      avatar,
+      workingHours,
+      roles,
+      isActive,
+      address,
+      city,
+      country,
+      services
+    } = req.body;
     const user = await User.findById(userId);
 
     if (!user) {
@@ -543,6 +558,36 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     if (phone) user.phone = phone;
+    if (address) user.address = address;
+    if (city) user.city = city;
+    if (country) user.country = country;
+    if (isActive !== undefined) user.isActive = isActive;
+
+    // Update services if provided
+    if (services !== undefined) {
+      if (!Array.isArray(services)) {
+        return next(errorHandler(400, "services must be an array of service IDs"));
+      }
+      user.services = services as any;
+    }
+
+    // Update roles if provided
+    if (roles !== undefined) {
+      if (!Array.isArray(roles) || roles.length === 0) {
+        return next(errorHandler(400, "User must have at least one role"));
+      }
+
+      // Resolve role names to role documents
+      const roleDocs = await Role.find({
+        name: { $in: roles.map((r: string) => String(r).toLowerCase()) }
+      });
+
+      if (roleDocs.length !== roles.length) {
+        return next(errorHandler(400, "One or more provided roles are invalid"));
+      }
+
+      user.roles = roleDocs.map((role) => role._id) as any;
+    }
 
     if (email) {
       // Validate and enforce unique email
@@ -608,6 +653,12 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
     }
 
     await user.save();
+
+    const roleNames = (user.roles || []).map((role: any) =>
+      role?._id ? role._id.toString() : role.toString()
+    );
+    const staffRole = await Role.findOne({ name: "staff" }).select("_id");
+    const isStaff = staffRole ? roleNames.includes(staffRole._id.toString()) : false;
 
     res.status(200).json({
       success: true,

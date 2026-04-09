@@ -303,7 +303,20 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
 export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.params;
-    const { firstName, lastName, phone, email, avatar, workingHours } = req.body;
+    const {
+      firstName,
+      lastName,
+      phone,
+      email,
+      avatar,
+      workingHours,
+      roles,
+      isActive,
+      address,
+      city,
+      country,
+      services
+    } = req.body;
     const user = await User.findById(userId);
 
     if (!user) {
@@ -314,6 +327,50 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     if (phone) user.phone = phone;
+    if (address) user.address = address;
+    if (city) user.city = city;
+    if (country) user.country = country;
+    if (isActive !== undefined) user.isActive = isActive;
+
+    // Update services if provided
+    if (services !== undefined) {
+      if (!Array.isArray(services)) {
+        return next(errorHandler(400, "services must be an array of service IDs"));
+      }
+      user.services = services as any;
+    }
+
+    // Update roles if provided
+    if (roles !== undefined) {
+      if (!Array.isArray(roles) || roles.length === 0) {
+        return next(errorHandler(400, "User must have at least one role"));
+      }
+
+      // Separate IDs from names for efficient lookup
+      const roleIds: string[] = [];
+      const roleNames: string[] = [];
+
+      roles.forEach((r: string) => {
+        const val = String(r).trim();
+        // Check if it's a valid MongoDB ObjectId
+        if (val.match(/^[0-9a-fA-F]{24}$/)) {
+          roleIds.push(val);
+        } else {
+          roleNames.push(val.toLowerCase());
+        }
+      });
+
+      // Resolve role documents using both IDs and names
+      const roleDocs = await Role.find({
+        $or: [{ _id: { $in: roleIds } }, { name: { $in: roleNames } }]
+      });
+
+      if (roleDocs.length === 0) {
+        return next(errorHandler(400, "No valid roles found from provided list"));
+      }
+
+      user.roles = roleDocs.map((role) => role._id) as any;
+    }
 
     if (email) {
       // Validate and enforce unique email
